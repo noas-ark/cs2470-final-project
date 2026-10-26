@@ -1,9 +1,11 @@
 """Run records: one JSON file per run, keyed by run id.
 
-    {"<run_id>": {"invariants": {...}, "params": {...}, "results": {"<bench>": {...}}, "meta": {...}}}
+    {"<run_id>": {"invariants": {...}, "params": {...}, "grid": {...},
+                  "results": {"<bench>": {...}}, "meta": {...}}}
 
-`invariants` describe the fixed setup (hardware, shapes), `params` what the experiment varies,
-`results` the metrics each benchmark produced, `meta` bookkeeping (timing, git commit, slurm job).
+`invariants` describe the fixed setup (hardware, shapes), `params` what the experiment varies, `grid`
+(only when non-empty) the axes a benchmark sweeps inside the run, `results` the metrics each benchmark
+produced, `meta` bookkeeping (timing, git commit, slurm job).
 """
 
 from __future__ import annotations
@@ -35,9 +37,13 @@ class RunRecord:
     params: dict[str, Scalar]
     results: dict[str, Metrics] = field(default_factory=dict)
     meta: dict[str, Scalar] = field(default_factory=dict)
+    grid: dict[str, list[Scalar]] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, object]:
         body = asdict(self)
+        grid = body.pop("grid")
+        if grid:  # absent when empty so records without a grid serialize as before
+            body = {k: v for k, v in body.items() if k != "meta"} | {"grid": grid, "meta": body["meta"]}
         return {body.pop("run_id"): body}
 
     def save(self, results_dir: Path = RESULTS_DIR) -> Path:
@@ -55,6 +61,7 @@ class RunRecord:
             params=body["params"],
             results=body.get("results", {}),
             meta=body.get("meta", {}),
+            grid=body.get("grid", {}),
         )
 
 

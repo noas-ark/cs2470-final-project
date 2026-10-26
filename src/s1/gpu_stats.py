@@ -13,8 +13,9 @@ import statistics
 import subprocess
 import threading
 import time
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Generator, Sequence
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from types import TracebackType
 
 from .record import Metrics, summarize
@@ -112,3 +113,36 @@ class GpuSampler:
 
     def metrics(self) -> Metrics:
         return summarize_samples(self.samples, self._t1 - self._t0)
+
+
+@dataclass
+class PointMetrics:
+    """Filled in when the `sample_point` block exits; empty if nvidia-smi is unavailable."""
+
+    metrics: Metrics = field(default_factory=dict)
+
+
+@contextmanager
+def sample_point(
+    prefix: str,
+    keys: Sequence[str] | None = None,
+    sampler: Callable[[], GpuSampler] = GpuSampler,
+) -> Generator[PointMetrics]:
+    """Sample one sweep point with its own `GpuSampler`; `point.metrics` is keyed `<prefix><metric>`.
+
+        with sample_point("t128_q4_", keys=("gpu_util_pct",)) as point:
+            ...  # run the point
+        point.metrics  # {"t128_q4_gpu_util_pct": ...}
+
+    `keys` restricts which of `summarize_samples`' metrics are kept (default: all).
+
+    Caveats when reading per-point numbers:
+      * `nvidia-smi` is polled every 500 ms (`GpuSampler(interval_ms=500)`), so a point needs to run for
+        several seconds to have a meaningful number of samples. Check `<prefix>gpu_samples`.
+      * Samples from every visible GPU are pooled: `gpu_util_pct` is the mean over all GPUs and all
+        ticks, so a TP=4 run with one busy GPU reads as 25% and gpu_count says how many were pooled.
+    """
+    point = PointMetrics()
+    with sampler() as smi:
+        yield point
+    point.metrics = {f"{prefix}{k}": v for k, v in smi.metrics().items() if keys is None or k in keys}

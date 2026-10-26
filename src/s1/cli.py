@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.table import Table
 
 from . import config, report, runner
+from .models.catalog import CATALOG
 from .record import RESULTS_DIR, load_all
 
 console = Console()
@@ -81,6 +82,20 @@ def _headline(metrics: dict[str, float] | None) -> str:
     key, val = next(iter(metrics.items()))
     std = metrics.get(f"{key}_std")
     return f"{val:.4g}" + (f" ± {std:.2g}" if std is not None else "")
+
+
+@app.command("models")
+def models_cmd() -> None:
+    """Table of the model catalog (pins, sizes, status); reads metadata only."""
+    t = Table(header_style="bold")
+    for col in ["name", "group", "status", "repo@rev", "GB", "license", "notes"]:
+        t.add_column(col, no_wrap=col != "notes")
+    for m in CATALOG:
+        gb = "" if m.weights_gb is None else f"{m.weights_gb:.1f}"
+        t.add_row(
+            m.name, m.group, m.status, f"{m.repo}@{(m.revision or 'unpinned')[:8]}", gb, m.license, m.notes
+        )
+    console.print(t)
 
 
 @app.command()

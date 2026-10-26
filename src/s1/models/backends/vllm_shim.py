@@ -1,4 +1,4 @@
-"""OpenJev (huggingface.co/openjev/openjev): a 27B Qwen3.5-based decision model.
+"""The `vllm_shim` backend: OpenJev (huggingface.co/openjev/openjev), a 27B Qwen3.5-based decision model.
 
 It answers typed questions through the decision API of its helper (`helper/shim.py`, shipped in the
 model repo), which sits in front of a vLLM server. `build` starts both on this node, with the serving
@@ -30,7 +30,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..registry import Settings, get_float, get_int, get_str, model
+from ...record import Scalar
+from ...registry import get_float, get_int, get_str
+from ..spec import ModelSpec
 
 # The model card's calibration; its accuracy numbers only hold with exactly these.
 SHIM_ENV = {
@@ -115,8 +117,7 @@ def _wait_ready(url: str, proc: subprocess.Popen[bytes], log: Path, deadline: fl
         time.sleep(2)
 
 
-@model("openjev")
-def build(settings: Settings) -> OpenJev:
+def build(settings: dict[str, Scalar]) -> OpenJev:
     if endpoint := get_str(settings, "openjev_endpoint", ""):
         return OpenJev(endpoint.rstrip("/"))
 
@@ -161,3 +162,8 @@ def build(settings: Settings) -> OpenJev:
         jev.close()
         raise
     return jev
+
+
+class VllmShim:
+    def build(self, spec: ModelSpec, settings: dict[str, Scalar]) -> OpenJev:
+        return build(settings)

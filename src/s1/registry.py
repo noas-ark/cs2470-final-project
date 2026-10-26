@@ -2,7 +2,8 @@
 
 Both receive `settings`: the run's invariants merged with its params (params win).
 
-Add a model:      @model("name")      def build(settings) -> object   (may define close())
+Add a model:      add a ModelSpec to s1/models/catalog.py (see AGENTS.md), or for a one-off
+                  @model("name")      def build(settings) -> object   (may define close())
 Add a benchmark:  @benchmark("name")  def run(model, settings) -> Metrics
 
 Implementations live in s1/models/ and s1/benchmarks/ and are imported by those packages'
@@ -36,10 +37,16 @@ MODELS: dict[str, ModelFactory] = {}
 BENCHMARKS: dict[str, BenchmarkFn] = {}
 
 
+def register_model(name: str, fn: ModelFactory) -> ModelFactory:
+    if name in MODELS:
+        raise ValueError(f"model {name!r} is already registered")
+    MODELS[name] = fn
+    return fn
+
+
 def model(name: str) -> Callable[[ModelFactory], ModelFactory]:
     def register(fn: ModelFactory) -> ModelFactory:
-        MODELS[name] = fn
-        return fn
+        return register_model(name, fn)
 
     return register
 

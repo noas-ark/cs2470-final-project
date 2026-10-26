@@ -1,0 +1,19 @@
+# Request-shape sweep: GPU utilization and per-question latency over state length x questions per request.
+# One model load; the [grid] axes are walked inside the benchmark (not expanded into separate runs).
+# max_model_len bounds the largest state (2048 tokens + 32 questions fits easily).
+benchmarks = ["shape_sweep"]
+
+[invariants]
+gpu = "auto"
+tensor_parallel_size = 4
+quantization = "none"
+max_model_len = 16384
+
+[params]
+model = "openjev"
+shape_warmup = 1
+shape_min_point_s = 5.0    # >= ~10 nvidia-smi samples (500 ms interval) per point
+
+[grid]
+state_tokens = [32, 128, 512, 2048]
+questions_per_request = [1, 4, 16, 32]

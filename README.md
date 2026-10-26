@@ -79,9 +79,12 @@ tensor_parallel_size = 4
 model = "openjev"
 [sweep]                 # optional: lists; one run per combination, merged into params
 jeval_seed = [0, 1, 2]
+[grid]                  # optional: lists that are NOT expanded; the run carries them (recorded as `grid`)
+state_tokens = [32, 128]  # and a benchmark such as shape_sweep walks them inside one model load
 ```
 
-Models and benchmarks both receive `invariants | params` as their `settings`.
+Models and benchmarks both receive `invariants | params` as their `settings`, plus each grid axis as
+`grid_<axis>` = comma-joined values (`grid_state_tokens = "32,128"`).
 Shipped configs: `configs/openjev_jeval_smoke.toml` (200 questions, about 17 min including load),
 `configs/openjev_jeval_2k.toml` (2,000, about 1 h) and `configs/openjev_jeval.toml` (all 11,257, about 5 h).
 
@@ -91,6 +94,7 @@ Shipped configs: `configs/openjev_jeval_smoke.toml` (200 questions, about 17 min
 |---|---|---|
 | Model | `openjev` | Starts vLLM plus the model's own `helper/shim.py` (`POST /v1/systemone`) with the model card's calibration, and stops both after the run. `openjev_endpoint` reuses a running helper instead. On A10G it needs `quantization = "none"`, because the card's fp8 recipe requires compute capability 8.9 or higher. |
 | Benchmark | `jeval` | JEVal (arXiv:2610.03935), pinned revision, 11,257 questions over 10 domains. It reports accuracy with invalid answers counted wrong, ECE (15 bins) and Brier score as in the paper, plus score-question accuracy/MAE and latency percentiles. Subsample with `jeval_limit` / `jeval_seed`. |
+| Benchmark | `shape_sweep` | Model-agnostic cost per question over a `[grid]` of `state_tokens` x `questions_per_request` (synthetic states, JEVal-shaped choice questions, concurrency 1). Each point repeats for `shape_min_point_s` and gets its own GPU sampling; latency is divided by the question count. Headline `shape_sweep_latency_ms` (lower is better), per-point keys `shape_sweep_t{T}_q{Q}_*`. Points above a model's optional `max_state_tokens` are counted as skipped, not wrong. Token counting is a pluggable `state_tokenizer` (only the approximate `approx_words` so far). Example: `configs/openjev_shape_sweep_smoke.toml`. |
 
 To add another model or benchmark, see [`AGENTS.md`](AGENTS.md#adding-a-jev-style-model).
 
@@ -99,14 +103,15 @@ To add another model or benchmark, see [`AGENTS.md`](AGENTS.md#adding-a-jev-styl
 ```
 src/s1/
   cli.py          s1 run / submit / ls / collect
-  config.py       TOML -> list of RunSpec (sweep expansion)
+  config.py       TOML -> list of RunSpec (sweep expansion, grid)
   runner.py       build model -> each benchmark under GpuSampler -> close -> write record
   record.py       RunRecord, results/ I/O, summarize() (mean/std/p90/p95/p99)
-  registry.py     @model / @benchmark registries, typed settings getters
+  registry.py     model / benchmark registries (duplicate names raise), typed settings getters
   gpu_stats.py    nvidia-smi sampler
   report.py       results/REPORT.md + report.html (run by the pre-commit hook)
-  models/         openjev.py
-  benchmarks/     jeval.py
+  models/         spec.py (ModelSpec), catalog.py (the list of specs), answers.py (System One answer
+                  assembly), backends/ (lazy table + vllm_shim.py, the OpenJev serving code)
+  benchmarks/     jeval.py, shape_sweep.py
 configs/          experiment configs
 results/          run records (committed)
 scripts/          download_model.sh (sbatch), alloc.sh (interactive GPU shell in tmux), hooks/pre-commit

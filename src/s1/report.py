@@ -37,7 +37,10 @@ GPU_COLS = (
 
 FORMATS: list[tuple[Callable[[str], bool], Callable[[float], str]]] = [
     (lambda k: k.endswith("accuracy"), lambda v: f"{v:.1%}"),
-    (lambda k: k.endswith(("_n", "invalid", "count", "samples")), lambda v: f"{v:,.0f}"),
+    (
+        lambda k: k.endswith(("_n", "invalid", "count", "samples", "skipped", "reps", "tokens_actual")),
+        lambda v: f"{v:,.0f}",
+    ),
     (lambda k: "latency_ms" in k, lambda v: f"{v / 1000:.1f} s" if v >= 1000 else f"{v:.0f} ms"),
     (lambda k: k.endswith("_pct"), lambda v: f"{v:.1f}%"),
     (lambda k: k.endswith(("_mb_max", "_mb_mean")), lambda v: f"{v / 1024:.1f} GiB"),
@@ -88,7 +91,14 @@ def hardware(r: RunRecord, bench: str) -> str:
 
 
 def other_params(r: RunRecord) -> str:
-    return ", ".join(f"{k}={v}" for k, v in sorted(r.params.items()) if k != "model") or DASH
+    items = [f"{k}={v}" for k, v in sorted(r.params.items()) if k != "model"]
+    items += [f"{k}={'|'.join(map(str, v))}" for k, v in sorted(r.grid.items())]
+    return ", ".join(items) or DASH
+
+
+def lower_is_better(head: str) -> bool:
+    """Latency-like headlines (key contains `latency`) rank ascending; everything else descending."""
+    return "latency" in head
 
 
 def best_per_model(bench: str, recs: Sequence[RunRecord]) -> list[RunRecord]:
@@ -104,7 +114,13 @@ def best_per_model(bench: str, recs: Sequence[RunRecord]) -> list[RunRecord]:
         if cur is None or size > (cur.results[bench].get(f"{bench}_n", 0.0), cur.run_id):
             best[model_of(r)] = r
     head = keys[0] if keys else ""
-    return sorted(best.values(), key=lambda r: -r.results[bench].get(head, float("-inf")))
+    sign = 1 if lower_is_better(head) else -1
+
+    def rank(r: RunRecord) -> float:
+        v = r.results[bench].get(head, math.nan)
+        return math.inf if math.isnan(v) else sign * v  # missing headline sorts last
+
+    return sorted(best.values(), key=rank)
 
 
 def leaderboard(bench: str, recs: Sequence[RunRecord]) -> Table:
@@ -243,7 +259,9 @@ def _bar_chart(bench: str, recs: Sequence[RunRecord]) -> str:
         return ""
     head = keys[0]
     vals = [r.results[bench].get(head, 0.0) for r in runs]
-    vmax = 1.0 if head.endswith("accuracy") else max(*vals, 1e-9)
+    finite = [v for v in vals if math.isfinite(v)]
+    vals = [v if math.isfinite(v) else 0.0 for v in vals]
+    vmax = 1.0 if head.endswith("accuracy") else max([*finite, 1e-9])
     label_w, chart_w, value_w, row_h, bar_h = 180, 520, 70, 34, 20
     width, height = label_w + chart_w + value_w, row_h * len(runs) + 8
     marks = []
@@ -264,7 +282,8 @@ def _bar_chart(bench: str, recs: Sequence[RunRecord]) -> str:
             f'v{bar_h - 8}a4,4 0 0 1 -4,4h{-end:.1f}z"/>'
             f'<text x="{label_w + w + 8:.1f}" y="{y + row_h / 2 + 4}">{html.escape(fmt(head, v))}</text></g>'
         )
-    title = f"{label(bench, head)} by model ({bench}, each model's largest run)"
+    note = ", lower is better" if lower_is_better(head) else ""
+    title = f"{label(bench, head)} by model ({bench}, each model's largest run{note})"
     return (
         f'<figure class="card chart"><figcaption><strong>{html.escape(title)}</strong></figcaption>'
         f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="{html.escape(title)}">'
