@@ -1,4 +1,5 @@
 import time
+from typing import override
 
 import pytest
 
@@ -44,8 +45,21 @@ def test_missing_model_is_an_error(tmp_path):
         config.load(p)
 
 
+class _PrimedSampler(GpuSampler):
+    """The fake benchmark finishes instantly, so wait for the fake nvidia-smi's first rows before returning.
+    Without this the sampler can stop before the subprocess prints anything (empty metrics, flaky test)."""
+
+    @override
+    def __enter__(self) -> GpuSampler:
+        super().__enter__()
+        deadline = time.monotonic() + 10
+        while len(self.samples) < 4 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return self
+
+
 def test_end_to_end_writes_records_and_gpu_stats(tmp_path, echo_model, count_bench, fake_nvidia_smi):
-    sampler = lambda: GpuSampler(cmd=fake_nvidia_smi)  # noqa: E731
+    sampler = lambda: _PrimedSampler(cmd=fake_nvidia_smi)  # noqa: E731
     p = tmp_path / "c.toml"
     p.write_text(CFG)
     for spec in config.load(p):
