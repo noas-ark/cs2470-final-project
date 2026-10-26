@@ -1,4 +1,4 @@
-# CI: the same gate AGENTS.md asks for locally, plus a check that the generated results report is in sync.
+# CI: the same gate AGENTS.md asks for locally, plus checks that results/ only holds untouched runner output.
 #
 #   * Light install only: `uv sync` (core deps + dev group). The `openjev` extra (vllm, torch) is never
 #     installed here; there is no GPU, no secrets, no model download and no Hub access. Only dependency
@@ -7,6 +7,15 @@
 #     pre-commit hook (scripts/hooks/pre-commit) regenerates them, but a commit made with --no-verify or
 #     without core.hooksPath set can leave them stale. Regenerating and running `git diff --exit-code`
 #     fails the build in that case. Fix: run `uv run s1 report` and commit both files.
+#   * Record integrity (tests/test_results_schema.py, tests/test_configs.py): every configs/*.toml loads;
+#     every results/*.json is byte-identical to what RunRecord.save would write, has a run id matching its
+#     filename, a resolved gpu, the meta keys the runner writes, nvidia_smi stats for GPU runs, and a
+#     meta.config that exists and lists its benchmarks.
+#   * Append-only (pull_request only): a PR may add results/*.json but never modify or delete one
+#     (AGENTS.md rule 2: one run = one record; re-run instead of editing).
+#
+# NOT enforced: CI cannot prove a record really came from the runner. Someone determined could forge every
+# field. These checks only make hand-written or hand-edited records fail loudly.
 #
 # Limitation: for pull requests from forks, GitHub runs the workflow definition from the base repo, so this
 # CI only runs on PRs after this file has been merged into the base branch's main.
@@ -30,6 +39,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0 # full history so the append-only check can diff against the base branch
 
       - uses: astral-sh/setup-uv@v10.3.2
         with:
@@ -49,3 +60,15 @@ jobs:
         run: |
           uv run s1 report
           git diff --exit-code results/
+
+      - name: Results records are append-only
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          changed=$(git diff --name-status --diff-filter=MD "origin/${BASE_REF}...HEAD" -- 'results/*.json')
+          if [ -n "$changed" ]; then
+            echo "Run records may only be added, never modified or deleted:"
+            echo "$changed"
+            exit 1
+          fi
