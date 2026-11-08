@@ -1,0 +1,22 @@
+src/s1/models/backends/gpu.py|unresolved-import|Cannot resolve imported module `torch`
+src/s1/models/backends/gpu.py|unresolved-import|Cannot resolve imported module `torch`
+src/s1/models/backends/gpu.py|unresolved-import|Cannot resolve imported module `torch`
+src/s1/models/backends/kev.py|unresolved-import|Cannot resolve imported module `torch`
+src/s1/models/backends/kev.py|unresolved-import|Cannot resolve imported module `torch`
+src/s1/models/backends/laya.py|unresolved-import|Cannot resolve imported module `torch`
+src/s1/models/backends/semif.py|unresolved-import|Cannot resolve imported module `torch`
+src/s1/models/backends/semif.py|unresolved-import|Cannot resolve imported module `torch`
+src/s1/models/backends/semif.py|unresolved-import|Cannot resolve imported module `torch`
+src/s1/models/backends/semif.py|unresolved-import|Cannot resolve imported module `torch`
+src/s1/models/backends/semif.py|unresolved-import|Cannot resolve imported module `transformers`
+src/s1/models/backends/semif.py|unused-ignore-comment|Unused `ty: ignore` directive
+src/s1/profiling.py|unresolved-import|Cannot resolve imported module `torch.utils.flop_counter`
+src/s1/profiling.py|unresolved-import|Cannot resolve imported module `torch`
+src/s1/profiling.py|unresolved-import|Cannot resolve imported module `torch`
+src/s1/profiling.py|unresolved-import|Cannot resolve imported module `torch`
+src/s1/profiling.py|unresolved-import|Cannot resolve imported module `torch`
+src/s1/profiling.py|unresolved-import|Cannot resolve imported module `torch`
+src/s1/profiling.py|unresolved-import|Cannot resolve imported module `torch`
+src/s1/profiling.py|unresolved-import|Cannot resolve imported module `torch`
+src/s1/profiling.py|unresolved-import|Cannot resolve imported module `torch`
+src/s1/profiling.py|unsound-return-statement|Unsound return statement: `dict[str, str | Unknown]` is not a subtype of `dict[str, str]`

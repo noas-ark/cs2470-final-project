@@ -9,6 +9,9 @@ Settings (all optional):
     jeval_limit        questions to run, 0 = all     default 0
     jeval_seed         seed for the --limit sample   default 0
     jeval_concurrency  requests in flight            default 8
+    jeval_warmup       answer the sample once, untimed, before measuring    default false
+                       (excludes one-time costs: kernel compilation, CUDA graph capture. The model's
+                       `after_warmup()`, if any, then drops whatever it cached, so no answers carry over.)
 """
 
 from __future__ import annotations
@@ -23,7 +26,7 @@ from pathlib import Path
 from typing import Protocol
 
 from ..record import Metrics, summarize
-from ..registry import Settings, benchmark, get_int
+from ..registry import Settings, benchmark, get_bool, get_int, warmup
 
 REPO = "carlosxiang/JEVal"
 REVISION = "5d0253c34cf5e371b3ae99c21f0a7170d7289f63"  # pinned so results stay comparable
@@ -179,13 +182,31 @@ def evaluate(model: DecisionModel, rows: Sequence[Row], concurrency: int = 8) ->
     return metrics(outcomes, time.perf_counter() - t)
 
 
-@benchmark("jeval")
-def run(model: object, settings: Settings) -> Metrics:
+def sample(settings: Settings) -> list[Row]:
+    rows = load_rows()
+    if limit := get_int(settings, "jeval_limit", 0):
+        rows = random.Random(get_int(settings, "jeval_seed", 0)).sample(rows, min(limit, len(rows)))
+    return rows
+
+
+def _decision_model(model: object) -> DecisionModel:
     if not callable(getattr(model, "decide", None)):
         raise TypeError(
             f"jeval needs a decision model with .decide(state, questions); got {type(model).__name__}"
         )
-    rows = load_rows()
-    if limit := get_int(settings, "jeval_limit", 0):
-        rows = random.Random(get_int(settings, "jeval_seed", 0)).sample(rows, min(limit, len(rows)))
-    return evaluate(model, rows, get_int(settings, "jeval_concurrency", 8))  # ty: ignore[invalid-argument-type]
+    return model  # ty: ignore[invalid-return-type]
+
+
+@warmup("jeval")
+def warm(model: object, settings: Settings) -> bool:
+    if not get_bool(settings, "jeval_warmup", False):
+        return False
+    evaluate(_decision_model(model), sample(settings), get_int(settings, "jeval_concurrency", 8))
+    if callable(after := getattr(model, "after_warmup", None)):
+        after()
+    return True
+
+
+@benchmark("jeval")
+def run(model: object, settings: Settings) -> Metrics:
+    return evaluate(_decision_model(model), sample(settings), get_int(settings, "jeval_concurrency", 8))

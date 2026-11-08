@@ -202,3 +202,83 @@ def test_latency_headline_sorts_ascending():
 def test_report_format_of_counts():
     assert report.fmt("shape_sweep_t8_q1_state_tokens_actual", 2048.0) == "2,048"
     assert report.fmt("shape_sweep_t8_q1_reps", 12.0) == "12"
+
+
+# ---- cache-aware sweep: unique states, real token counter, vLLM prefix-caching switch
+
+
+class StateLog:
+    """Fake model that keeps every state it was sent."""
+
+    def __init__(self):
+        self.states = []
+
+    def decide(self, state, questions):
+        self.states.append(state)
+        return {k: {"type": "choice", "choice": "a", "probabilities": {"a": 1.0}} for k in questions}
+
+
+def test_every_repetition_gets_a_different_state_of_the_same_length():
+    model = StateLog()
+    m = sweep(model, [32], [1], warmup=1, min_point_s=2.0, clock=Clock())
+    reps = int(m["shape_sweep_t32_q1_reps"])
+    assert reps >= 3
+    measured = model.states[1:]  # model.states[0] is the warm-up
+    assert len(measured) == reps and len(set(measured)) == reps and model.states[0] not in measured
+    assert {len(s.split()) for s in model.states} == {32}
+    assert m["shape_sweep_unique_states"] == 1.0
+
+
+def test_identical_states_when_unique_states_is_off():
+    model = StateLog()
+    m = sweep(model, [32], [1], warmup=1, min_point_s=2.0, clock=Clock(), unique_states=False)
+    assert len(set(model.states)) == 1 and len(model.states) == m["shape_sweep_t32_q1_reps"] + 1
+    assert m["shape_sweep_unique_states"] == 0.0
+
+
+def test_states_are_deterministic_per_salt():
+    c = WordCounter()
+    s = SyntheticStates(seed=1)
+    assert s.state(64, c, salt=3) == s.state(64, c, salt=3)
+    assert s.state(64, c, salt=3) != s.state(64, c, salt=4)
+
+
+def test_building_a_state_is_not_counted_in_the_latency():
+    class SlowStates(SyntheticStates):
+        @override
+        def state(self, tokens, counter, salt=0):
+            clock.t += 100.0  # expensive to build
+            return super().state(tokens, counter, salt)
+
+    clock = Clock()
+    m = sweep(FakeModel(), [8], [1], warmup=0, min_point_s=0.0, clock=clock, states=SlowStates())
+    assert m["shape_sweep_t8_q1_request_ms"] < 1000  # not the 100 s spent building the state
+
+
+def test_file_token_counter_counts_with_a_real_tokenizer(tmp_path):
+    pytest.importorskip("tokenizers")
+    from tokenizers import Tokenizer, models, pre_tokenizers  # noqa: PLC0415
+
+    vocab = {w: i for i, w in enumerate([*shape_sweep.WORDS, "[UNK]"])}
+    tok = Tokenizer(models.WordLevel(vocab, unk_token="[UNK]"))
+    tok.pre_tokenizer = pre_tokenizers.Whitespace()
+    path = tmp_path / "tokenizer.json"
+    tok.save(str(path))
+
+    counter = shape_sweep.TOKENIZERS["file"]({"state_tokenizer_file": str(path)})
+    assert counter.count("the of and") == 3
+    state = SyntheticStates().state(200, counter)
+    assert counter.count(state) == 200  # common words are one token each, so the fit is exact
+
+
+def test_file_token_counter_needs_a_path():
+    with pytest.raises(KeyError, match="state_tokenizer_file"):
+        shape_sweep.TOKENIZERS["file"]({})
+
+
+def test_unknown_tokenizer_is_an_error():
+    with pytest.raises(KeyError, match="unknown state_tokenizer"):
+        shape_sweep.run(
+            FakeModel(),
+            {"state_tokenizer": "nope", "grid_state_tokens": "8", "grid_questions_per_request": "1"},
+        )

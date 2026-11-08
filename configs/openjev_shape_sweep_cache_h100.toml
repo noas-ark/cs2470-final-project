@@ -1,0 +1,37 @@
+# M1 baseline: the cache-aware request-shape sweep (configs/openjev_shape_sweep_cache.toml) on ONE H100 instead of
+# 4x A10G. Same grid, same fresh-state repetitions, same reference tokenizer (the model's own, now on the Modal
+# models volume via $MODELS_DIR), cache on and off. Only the [launch] table, the GPU and the split change.
+#   uv run --group modal s1 submit configs/openjev_shape_sweep_cache_h100.toml
+benchmarks = ["shape_sweep"]
+
+[launch]
+orchestrator = "modal"
+gpu = "H100"
+gpus = 1
+cpus = 8
+mem = "96G"
+time = "02:30:00"
+
+[invariants]
+gpu_metrics = "detailed"   # every Modal run (superset of basic); the M1/M2 records committed on 2026-11-08 were basic
+gpu_metrics_schema = 1
+gpu = "auto"
+require_gpu = "H100"
+tensor_parallel_size = 1
+quantization = "none"
+max_model_len = 16384
+state_tokenizer = "file"
+state_tokenizer_file = "$MODELS_DIR/openjev/tokenizer.json"
+
+[params]
+model = "openjev"
+shape_warmup = 1
+shape_min_point_s = 5.0
+shape_unique_states = true
+
+[sweep]
+prefix_caching = [true, false]
+
+[grid]
+state_tokens = [32, 256, 640, 720, 1400, 1500, 2048]
+questions_per_request = [1, 4, 16, 32]

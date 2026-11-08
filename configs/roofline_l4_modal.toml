@@ -1,0 +1,43 @@
+# M2 calibration: configs/roofline_l4.toml unchanged except for the [launch] table (a Modal L4). The tokenizer
+# path is $MODELS_DIR/..., which resolves on both platforms. Compare its records with the committed cluster
+# L4 runs before putting Modal GPUs next to cluster results.
+# Weights (once each, catalog revisions): uv run --group modal s1 download <repo> <revision>   (see `uv run s1 models`)
+#   uv run --group modal s1 submit configs/roofline_l4_modal.toml
+benchmarks = ["roofline"]
+
+[launch]
+orchestrator = "modal"
+gpu = "L4"
+gpus = 1
+cpus = 8
+mem = "28G"
+time = "02:00:00"
+
+[invariants]
+gpu_metrics = "detailed"   # every Modal run (superset of basic); the M1/M2 records committed on 2026-11-08 were basic
+gpu_metrics_schema = 1
+gpu = "auto"
+require_gpu = "L4"
+dtype = "bfloat16"
+measure_ceilings = true
+max_prompt_tokens = 16384
+semif_max_options = 16
+
+[params]
+roofline_limit = 200
+roofline_seed = 0
+roofline_max_tokens = 1024
+roofline_max_options = 16
+roofline_warmup = 8
+roofline_counted = 8
+roofline_tokenizer_file = "$MODELS_DIR/Qwen3.5-4B-Base/tokenizer.json"
+
+[sweep]
+model = [
+    "qwen35-9b.zeroshot",
+    "jevk5-9b",
+    "qwen3-8b.zeroshot",
+    "olmoe-1b-7b.zeroshot",
+    "lfm2-8b-a1b.zeroshot",
+    "granite4-h-tiny.zeroshot",
+]

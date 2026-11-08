@@ -1,0 +1,31 @@
+# Kev-4B on the same L4 roofline as configs/roofline_l4.toml (same subset, ceilings and settings), served by
+# upstream's own stack (kev.serve: LoRA merged, pointer head, prefix cache; on the hybrid base fused Triton
+# kernels and CUDA graphs). The pair is one recipe on two backbones: kev-4b.hybrid (Qwen3.5-4B-Base, Gated
+# DeltaNet hybrid) and kev-4b.qwen3 (Qwen3-4B-Base, attention only).
+# CUDA graphs capture lazily (a new bucket runs eagerly first), so the warm-up answers the whole subset once,
+# untimed; after_warmup() then captures what is pending and empties the prefix cache. FlopCounterMode cannot
+# see graph replays, so roofline_counted = 0 (s1 ncu counts the kernels instead).
+# Weights and code (once; see configs/kev_jeval_smoke.toml): kev-4b-hybrid, kev-4b-qwen3, Qwen3.5-4B-Base,
+# Qwen3-4B-Base, kev-code.
+#   uv run s1 submit configs/roofline_l4_kev.toml -p gpu-spec --gpu-type l4 -g 1 -c 8 --mem 28G -t 02:00:00
+#   uv run s1 submit configs/roofline_l4_kev.toml --ncu 4 -p gpu-spec --gpu-type l4 -g 1 -c 8 --mem 28G -t 05:00:00
+benchmarks = ["roofline"]
+
+[invariants]
+gpu = "auto"
+require_gpu = "L4"
+dtype = "bfloat16"
+measure_ceilings = true
+max_prompt_tokens = 16384
+
+[params]
+roofline_limit = 200
+roofline_seed = 0
+roofline_max_tokens = 1024
+roofline_max_options = 16
+roofline_warmup = 200
+roofline_counted = 0
+roofline_tokenizer_file = "$MODELS_DIR/Qwen3.5-4B-Base/tokenizer.json"
+
+[sweep]
+model = ["kev-4b.hybrid", "kev-4b.qwen3"]

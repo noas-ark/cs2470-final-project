@@ -10,6 +10,18 @@ and current results.
 1. **Never run models, downloads or big installs on the login node.** Each process is capped at 2 GB
    of virtual memory and each user at 100 processes. `hf download`, pyarrow's thread pool and vLLM all
    die there. Use `sbatch`, or `srun` into an allocation.
+
+   **If you are an agent (Claude Code or otherwise) running directly on the login node**: this is a
+   hard stop, not a suggestion. Before running any command, check whether it is one of these:
+   `uv run s1 run`, `hf download`, `pip install`, `uv sync` (with or without `--extra openjev`: a plain
+   `uv sync` removes the GPU extras that are already installed in the shared `.venv`, and the extra
+   itself is installed only inside an allocation), `vllm serve`, loading a model with
+   `transformers`/`torch`, or anything else that allocates meaningful memory, downloads weights, or
+   touches a GPU. If it is, **do not run it**: stop and tell the user it needs to go through
+   `sbatch scripts/download_model.sh ...` or `uv run s1 submit ...` / `srun --jobid=$JOB ...` instead,
+   and ask them how they'd like to proceed. `uv run s1 submit` itself is fine on the login node, because
+   it only queues an `sbatch` job. Lightweight commands (`git`, editing configs, `uv run s1 ls`,
+   `cat`/`grep` on logs, `squeue`, `sinfo`) are fine to run directly.
 2. **Commit `results/*.json` and nothing from `logs/`** (gitignored). One run = one record file;
    never edit a record by hand. Re-run instead.
 3. **Pin everything that affects numbers**: dataset revision (`REVISION` constant in the benchmark),
@@ -39,6 +51,14 @@ and current results.
   compute capability 8.6. **No FP8**: `--quantization fp8` crashes with
   `cutlass_scaled_mm_sm80_epilogue`. Serve bf16 (`quantization = "none"`). Always confirm with
   `srun --jobid=$JOB --overlap -n 1 nvidia-smi --query-gpu=name,compute_cap,memory.total --format=csv`.
+- **Check the GPU you actually got.** On 2026-10-26 job 4059 on `gpu-parallel` landed on 4x **L4** (sm89), not
+  A10G, so results from different days may not be comparable. `invariants.gpu` records it.
+- **`gpu` mislabels too.** On 2026-11-04 jobs 6751/6770 on `gpu` (`gpu:l4:1`) got an **A10G**. For work that
+  must be on an L4, use `-p gpu-spec --gpu-type l4` (it types its GPUs: a10g, l4, rtxpro4500, t4; 6 h limit;
+  the L4 nodes have 8 CPUs and 31 GB RAM, so `--mem 28G`) and set `require_gpu = "L4"` so a wrong GPU fails fast.
+- **Hardware counters are open to users** (`RmProfilingAdminOnly: 0`). `ncu`, `nsys` and `nvcc` (CUDA 13.0,
+  driver 580) are in `/usr/local/cuda/bin` on GPU nodes only, not the login node. `/tmp` is node-local: anything
+  a job reads must be under `/shared`.
 - Nodes are powered-down cloud instances (`idle~`), so expect 5–10 min to boot.
   `NODE_FAIL` / `sinfo -R` showing `InsufficientInstanceCapacity` means AWS is out of that
   instance type. Just resubmit; the second try worked within minutes.
@@ -55,7 +75,9 @@ and current results.
 sbatch scripts/download_model.sh <org>/<name>     # -> /shared/home/$USER/models/<name>, ~10 min for 55 GB
 squeue -u $USER; cat logs/download-<jobid>.out
 ```
-The script runs `sha256sum -c SHA256SUMS` when the repo ships one. For openjev/openjev, only
+Pin the revision and name the directory as the backend expects:
+`sbatch scripts/download_model.sh <org>/<name> <revision> <dir name>` (each model's config lists its
+commands). The script runs `sha256sum -c SHA256SUMS` when the repo ships one. For openjev/openjev, only
 `README.md` mismatches (the card was edited after the sums were generated) and the job then ends
 `FAILED` under `set -e`. That's harmless if every `*.safetensors` and `helper/*` file passed.
 
@@ -65,6 +87,12 @@ Copy `configs/openjev_jeval_smoke.toml` (or `configs/openjev_shape_sweep_smoke.t
 you're testing (model, sample size, seed) in `[params]` or `[sweep]`. **Always run a ~200-question
 smoke config first.** The 2k sample gives ±2-point accuracy CIs, and the full JEVal run takes ~5 h
 on A10G.
+
+**GPU-efficiency questions need `gpu_metrics = "detailed"`** (see "GPU metrics"): request-shape sweeps and
+anything asking whether the GPU is used well. A run without it cannot separate shapes (pooled utilization
+saturates), so treat it as inconclusive for that question. Accuracy-only runs stay `basic`.
+**On a GPU type nobody has profiled yet**, run `scripts/profiling_probe.sh` once and read its
+`RmProfilingAdminOnly` line before relying on ncu there (`docs/profiling.md`).
 
 ### 3a. Batch (preferred when nobody is watching)
 
@@ -121,6 +149,38 @@ Look at the regenerated `results/REPORT.md` diff before pushing: the new run sho
 Commit the code a run used **before** launching it when you can. `meta.git_commit` then names a
 real commit instead of `<sha>-dirty`. Update the README results table when a run is worth citing.
 
+## GPU metrics (`gpu_metrics`)
+
+Every benchmark is wrapped in a `GpuSampler`; its stats land in `results["<bench>/nvidia_smi"]`. Which keys
+exist is a per-run setting, recorded in the run record (`invariants`):
+
+| Setting | Meaning |
+|---|---|
+| `gpu_metrics = "basic"` (default) | The pooled keys only (`gpu_util_pct`, `gpu_power_w_total_mean`, ...). Output is unchanged, so existing records and reports are unaffected. |
+| `gpu_metrics = "detailed"` | Basic keys plus the schema-1 keys below. The runner records `gpu_metrics_schema = 1` in `invariants`. |
+| `gpu_metrics_schema = 1` | Version of the detailed key set. A config that names a schema this code does not write is an error; changing the key set bumps it. |
+
+**Every Modal GPU config sets `gpu_metrics = "detailed"`** (a test enforces it). **Old records do not have
+the detailed keys. That is intentional** (opt-in, versioned): compare detailed
+runs only with detailed runs. Example config: `configs/openjev_shape_sweep_cache_detailed.toml`.
+
+Schema 1 (`g` = GPU index; a key is absent when its source is missing or `[N/A]`, never zero-filled):
+
+- per GPU, `nvidia-smi --query-gpu` every 500 ms: `gpu{g}_util_pct`, `_util_pct_max`, `gpu{g}_mem_util_pct`
+  (memory-controller busy %), `gpu{g}_mem_used_mb_max`, `gpu{g}_power_w`, `_power_w_max`,
+  `gpu{g}_clock_sm_mhz`, `gpu{g}_clock_mem_mhz`, `gpu{g}_throttle_frac` (share of samples with a
+  power/thermal/slowdown throttle reason; idle does not count);
+- per GPU, `nvidia-smi dmon -s t` every 1 s: `gpu{g}_pcie_rx_mb_s`, `_rx_mb_s_max`, `_tx_mb_s`, `_tx_mb_s_max`;
+- pooled: `gpu_mem_util_pct`, `gpu_clock_sm_mhz`, `gpu_clock_sm_mhz_min`, `gpu_clock_mem_mhz`,
+  `gpu_throttle_frac`, `gpu_throttle_mask_seen`, `gpu_util_pct_spread` (max - min of per-GPU mean util),
+  `gpu_pcie_rx_mb_s_total_mean`, `gpu_pcie_tx_mb_s_total_mean`, `gpu_pcie_samples`.
+
+In a sweep, `sample_point` keeps the detailed keys automatically; `GPU_KEYS` only selects basic ones.
+
+**Pooled `gpu_util_pct` only says "some kernel was running": it sits at 85-98% for prefill-bound workloads
+at every request shape, so it cannot separate them.** Use the per-GPU, memory-controller, clock and PCIe
+keys, and see `docs/profiling.md` for which profilers (DCGM, nsys, ncu) work on this cluster.
+
 ## Adding a Jev-style model
 
 A model is data plus a backend. The data is a `ModelSpec` in `src/s1/models/catalog.py`, and the
@@ -176,6 +236,11 @@ Pick the case that matches the model:
    them into answers with the helpers in `s1.models.answers` (`choice_answer`, `noul_from_logits`,
    `score_answer`: temperature-scaled softmax with validation). Put calibration constants in
    `options` so they get recorded.
+   Models that run in-process with `transformers` (`kev`, `semif`, `laya`, `bongard` backends) share
+   `backends/gpu.py`. It refuses to run without CUDA, and it enforces `require_gpu` (a device-name substring,
+   e.g. bongard-mini's `"rtx pro 4500"`). It also checks shipped code by sha256 (`check_sha256`) or a pinned
+   checkout by commit (`check_git_commit`) before importing it. Keep prompt building and readout in
+   torch-free functions so `tests/test_gpu_backends.py` can test them on the login node.
 3. **It's a hosted API.** Make `decide` call it over HTTP. Keep keys in environment variables,
    never in configs or records.
 
@@ -189,6 +254,16 @@ Before the first GPU run:
 - **Context:** JEVal prompts run up to ~80k tokens, and anything over `max_model_len` is invalid.
 - **License:** note it in the model's docstring (OpenJev weights are CC BY-NC 4.0).
 - **Test it** with a fake in `tests/` if it has logic beyond HTTP plumbing (see `tests/conftest.py::EchoModel`).
+- **Roofline:** the `roofline` benchmark needs `s1.flops` to know the model's `model_type`. Add a builder there
+  and check its parameter count against the Hub's safetensors total in `tests/test_flops.py`; the backend must
+  implement `profile_info`/`take_forwards`/`count_flops` (and `profiler` for `s1 ncu`), see `backends/semif.py`.
+  A model with no vocab head (pointer/marker heads: kev, laya) records with `ForwardRecorder(m, head=False)`;
+  fp32 weights report `"weight_bytes": 4`; passes that bypass module hooks (CUDA graph replays) are timed with
+  `recorder.span(shape)` and anything that is not a decision (graph captures) runs inside `recorder.suspended()`
+  (see `backends/kev.py`). The analysis prose for the report lives in `results/roofline_findings.md`; rewrite it
+  when the roofline runs change.
+- **Conflicting dependencies** (another torch/transformers): give the model its own uv project under
+  `runtimes/<name>/` and a worker spoken to over a pipe, like `runtimes/elephant/` (`backends/elephant.py`).
 
 ## Adding a benchmark
 
@@ -197,6 +272,8 @@ A benchmark is `@benchmark("name") def run(model, settings) -> dict[str, float]`
 
 - **Prefix every metric key with the benchmark name.** Make the **first key the headline**: `s1 ls` shows it.
 - Use `summarize("<name>_latency_ms", values)` for distributions (mean/std/p90/p95/p99).
+- Metrics are numbers. For a text fact about the run (which CUDA kernels ran), call
+  `note("<name>_key", value)` from `s1.registry`; the runner puts it in the record's `meta`.
 - Count failed or malformed answers as **invalid and wrong**, and report the invalid count.
 - Pin the dataset: `REPO` and a commit-SHA `REVISION` constant (get it with
   `HfApi().dataset_info(repo).sha`).
@@ -216,6 +293,14 @@ A benchmark is `@benchmark("name") def run(model, settings) -> dict[str, float]`
 - For per-point GPU numbers use `gpu_stats.sample_point(prefix)`. It samples every 500 ms and pools all
   GPUs, so a point needs several seconds to be meaningful (check `gpu_samples`).
 - A headline whose key contains `latency` is lower-is-better in the report.
+- **Beware prefix caches when you repeat a request.** `shape_sweep` gives every repetition a fresh state
+  (`shape_unique_states`, default true); with identical repeats only the first pays for the state and
+  the rest measure the cache. For OpenJev, vLLM caches this hybrid model in blocks of 784 tokens (the
+  vLLM log says "Setting attention block size to 784 tokens"), so a prompt below 784 tokens never hits and a
+  longer one hits only whole blocks. `vllm_shim` takes `prefix_caching = false` to turn the cache off.
+- **Count state length with a real tokenizer.** `state_tokenizer = "file"` plus `state_tokenizer_file`
+  (a `tokenizer.json`) counts with one reference tokenizer for every model. The default `approx_words`
+  counts one token per word and is only for tests (pseudo-words were ~5 tokens each).
 
 If the dataset is decision-shaped (state + typed questions + label), **reuse `jeval`'s machinery**:
 convert rows to `jeval.Row` and call `jeval.evaluate(model, rows, concurrency)`. That gives
@@ -247,3 +332,8 @@ print(evaluate(EchoModel(), load_rows(), concurrency=1))"
 | Test fakes (EchoModel, fake nvidia-smi) | `tests/conftest.py` |
 | Results report (columns, formatting, chart) | `src/s1/report.py`, hook in `scripts/hooks/pre-commit` |
 | OpenJev serving reference | `/shared/home/$USER/models/openjev/serve/SERVE.md` |
+| Roofline: FLOP/byte cost model per architecture | `src/s1/flops.py` |
+| Forward timing, measured ceilings, FlopCounterMode | `src/s1/profiling.py` |
+| Roofline benchmark; hardware counters (`s1 ncu`) | `src/s1/benchmarks/roofline.py`, `src/s1/ncu.py` |
+| Roofline chart and table in the report | `src/s1/report_roofline.py` |
+| elephant-1's own runtime (torch 2.8) | `runtimes/elephant/` (build: `sbatch runtimes/elephant/setup.sh`) |

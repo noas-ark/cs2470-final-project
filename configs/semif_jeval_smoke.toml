@@ -1,0 +1,25 @@
+# Smoke check for the SemIf controls (generic Qwen models, no decision training): Qwen3.5-4B read out
+# directly, and Qwen3-Reranker-4B scoring each option. 200 random JEVal questions each, one at a time.
+# Upstream caps a question at 16 options, so ~20% of JEVal (choice questions with 17-255 options) is invalid
+# by construction; semif_max_options = 26 would lift the cap to A-Z for a separate experiment.
+# Weights first (each once):
+#   sbatch scripts/download_model.sh Qwen/Qwen3.5-4B 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+#   sbatch scripts/download_model.sh Qwen/Qwen3-Reranker-4B 22e683669bc0f0bd69640a1354a6d0aebcfeede5
+# Then:
+#   uv run s1 submit configs/semif_jeval_smoke.toml -p gpu -g 1 -c 8 --mem 28G -t 02:00:00
+benchmarks = ["jeval"]
+
+[invariants]
+gpu = "auto"
+dtype = "bfloat16"
+max_prompt_tokens = 16384  # upstream defaults to 4096; this matches the openjev runs
+semif_max_options = 16     # upstream's cap (letters A-P)
+
+[params]
+jeval_limit = 200
+jeval_seed = 0
+jeval_concurrency = 1
+jeval_warmup = true      # one untimed pass first: kernel compilation is not latency
+
+[sweep]
+model = ["semif.direct", "semif.reranker"]

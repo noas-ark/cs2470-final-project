@@ -1,0 +1,18 @@
+# Smoke check for Bongard-mini (T5Gemma 2 encoder-decoder, 15 GB bf16): 200 random JEVal questions, one at a
+# time. RTX Pro 4500 (32 GB) only: the backend refuses any other GPU.
+# Weights and code first (once):
+#   sbatch scripts/download_model.sh AgentBull/bongard-mini c81c5b883a5983669be84be98658eac940489613
+#   scripts/fetch_code.sh AgentBull/bongard 3e6e6030a953dfe8d30d93aca2d0ab92b87b4a5a bongard-code
+# Then:
+#   uv run s1 submit configs/bongard_jeval_smoke.toml -p gpu-g7-reserved -g 1 -c 8 --mem 64G -t 01:00:00
+benchmarks = ["jeval"]
+
+[invariants]
+gpu = "auto"
+
+[params]
+model = "bongard-mini"
+jeval_limit = 200
+jeval_seed = 0
+jeval_concurrency = 1
+jeval_warmup = true      # one untimed pass first: kernel compilation is not latency

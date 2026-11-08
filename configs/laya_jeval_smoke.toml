@@ -1,0 +1,20 @@
+# Smoke check for both Laya encoders (English ModernBERT-large, 512-token sequences; multilingual mmBERT-base,
+# 1024). 200 random JEVal questions each, one at a time. Long states are cut to fit, as upstream, so nothing
+# is invalid for length. Tiny (<1 GB), but run on a GPU like the rest.
+# Weights first (once; both checkpoints are in the one repo):
+#   sbatch scripts/download_model.sh convaiinnovations/laya 7b928d828b7b0e022f929d9bd2e44165aa270148 laya
+# Then:
+#   uv run s1 submit configs/laya_jeval_smoke.toml -p gpu -g 1 -c 8 --mem 28G -t 01:00:00
+benchmarks = ["jeval"]
+
+[invariants]
+gpu = "auto"
+
+[params]
+jeval_limit = 200
+jeval_seed = 0
+jeval_concurrency = 1
+jeval_warmup = true      # one untimed pass first: kernel compilation is not latency
+
+[sweep]
+model = ["laya.english", "laya.multilingual"]

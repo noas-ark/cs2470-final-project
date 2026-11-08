@@ -12,13 +12,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Serving stack pinned to the versions OpenJev's serve/SERVE.md was measured with. Install on a GPU node:
-#   uv sync --extra openjev
+# GPU stack. vllm/openai/httpx are pinned to the versions OpenJev's serve/SERVE.md was measured with;
+# peft and flash-linear-attention (Qwen3.5's Gated DeltaNet kernels) to Kev's uv.lock / modal_app.py.
+# Install on a GPU node:  uv sync --extra openjev
 openjev = [
     "vllm==0.29.0",
     "transformers==5.17.0",
     "openai==3.16.2",
     "httpx==0.28.1",
+    "peft==0.21.0",
+    "flash-linear-attention==0.5.2",
 ]
 
 [project.scripts]
@@ -34,9 +37,18 @@ packages = ["src/s1"]
 [dependency-groups]
 dev = [
     "pytest>=8",
+    "tokenizers>=0.20",  # tests build a toy tokenizer for the shape_sweep token counter
     "ruff>=0.17.0",
     "ty>=0.0.86",
 ]
+# Modal client for `s1 submit --on modal` and the model download (s1.launch.modal_app). Only the machine that
+# launches needs it; the cluster, tests and `import s1` never import it. Install: uv sync --group modal
+modal = [
+    "modal>=1.2",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]  # runtimes/*/ hold third-party checkouts with their own tests
 
 [tool.ruff]
 line-length = 110
@@ -70,6 +82,9 @@ ignore = [
 
 [tool.ty.environment]
 python-version = "3.12"
+
+[tool.ty.src]
+exclude = ["runtimes/", ".claude/", "scripts/modal_probe.py"]  # .claude/hooks: stdlib-only hook scripts; scripts/modal_probe.py: a standalone Modal app (its types depend on whether modal is installed); runtimes: their own venvs (e.g. runtimes/elephant imports qev under torch 2.8)
 
 [tool.ty.rules]
 all = "error"

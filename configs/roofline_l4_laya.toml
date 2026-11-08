@@ -1,0 +1,24 @@
+# Laya on the same L4 roofline as configs/roofline_l4.toml (same subset, ceilings and settings): a ModernBERT
+# encoder with a decision head on the option markers, run by the repo's own RLAgent (fp32 weights under bf16
+# autocast; state cut to max_len: 512 tokens English, 1024 multilingual). Both checkpoints of the one repo:
+# English (ModernBERT-large, 395M) and multilingual (mmBERT-base, 307M).
+# Weights (once): sbatch scripts/download_model.sh convaiinnovations/laya 7b928d828b7b0e022f929d9bd2e44165aa270148 laya
+#   uv run s1 submit configs/roofline_l4_laya.toml -p gpu-spec --gpu-type l4 -g 1 -c 8 --mem 28G -t 01:00:00
+benchmarks = ["roofline"]
+
+[invariants]
+gpu = "auto"
+require_gpu = "L4"
+measure_ceilings = true
+
+[params]
+roofline_limit = 200
+roofline_seed = 0
+roofline_max_tokens = 1024
+roofline_max_options = 16
+roofline_warmup = 8
+roofline_counted = 8
+roofline_tokenizer_file = "$MODELS_DIR/Qwen3.5-4B-Base/tokenizer.json"
+
+[sweep]
+model = ["laya.english", "laya.multilingual"]

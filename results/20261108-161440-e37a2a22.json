@@ -1,0 +1,73 @@
+{
+    "20261108-161440-e37a2a22": {
+        "invariants": {
+            "gpu": "NVIDIA H100 80GB HBM3",
+            "require_gpu": "H100",
+            "tensor_parallel_size": 1,
+            "quantization": "none",
+            "max_model_len": 16384,
+            "platform": "modal"
+        },
+        "params": {
+            "model": "openjev",
+            "jeval_limit": 200,
+            "jeval_seed": 0,
+            "jeval_concurrency": 1,
+            "spec_group": "reference",
+            "spec_repo": "openjev/openjev",
+            "spec_license": "cc-by-nc-4.0",
+            "spec_weights_gb": 54.713606768
+        },
+        "results": {
+            "jeval": {
+                "jeval_accuracy": 0.7755102040816326,
+                "jeval_ece": 0.050627894736842115,
+                "jeval_brier": 0.2421542537368421,
+                "jeval_choice_accuracy": 0.7687861271676301,
+                "jeval_noul_accuracy": 0.8260869565217391,
+                "jeval_score_accuracy": 0.5,
+                "jeval_score_mae": 0.3946249999999999,
+                "jeval_n": 200.0,
+                "jeval_invalid": 6.0,
+                "jeval_questions_per_s": 5.44707410845128,
+                "jeval_latency_ms": 187.90513806700946,
+                "jeval_latency_ms_std": 311.16760537674196,
+                "jeval_latency_ms_p90": 532.6013370999933,
+                "jeval_latency_ms_p95": 1004.1699563499634,
+                "jeval_latency_ms_p99": 1298.492200320017
+            },
+            "jeval/nvidia_smi": {
+                "gpu_util_pct": 84.27027027027027,
+                "gpu_util_pct_std": 21.409960612772448,
+                "gpu_util_pct_p90": 100.0,
+                "gpu_util_pct_p95": 100.0,
+                "gpu_util_pct_p99": 100.0,
+                "gpu_count": 1.0,
+                "gpu_mem_used_mb_max": 73293.0,
+                "gpu_mem_used_mb_mean": 73247.56756756757,
+                "gpu_mem_total_mb": 81559.0,
+                "gpu_power_w_total_mean": 627.234054054054,
+                "gpu_power_w_max": 710.45,
+                "gpu_energy_wh": 6.434551722033958,
+                "gpu_temp_c_max": 78.0,
+                "gpu_samples": 74.0,
+                "gpu_sampled_s": 36.93100852799995
+            }
+        },
+        "meta": {
+            "started": "2026-11-08T16:14:40",
+            "git_commit": "ced5231",
+            "host": "modal",
+            "config": "configs/openjev_jeval_smoke_h100.toml",
+            "orchestrator": "modal",
+            "modal_task_id": "ta-01M6XYQQMKW9VFEW9ZWZ9SQK2R",
+            "cpu_model": "unknown",
+            "gpu_driver": "610.57.04",
+            "gpu_power_limit_w": 700.0,
+            "nvidia_smi_q_log": "/runs/fc-01M6XYQQCYQ80AEBKG1A8Q46HB/logs/nvidia-smi-q-ta-01M6XYQQMKW9VFEW9ZWZ9SQK2R.txt",
+            "load_s": 116.07,
+            "jeval_s": 37.148,
+            "duration_s": 153.84
+        }
+    }
+}

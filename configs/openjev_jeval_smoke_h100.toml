@@ -1,0 +1,31 @@
+# M1 baseline: OpenJev on ONE H100 (no tensor-parallel split), same 200 JEVal questions as the 4x A10G smoke
+# runs (configs/openjev_jeval_smoke.toml). Only the GPU and the split change: bf16, max_model_len 16384, seed 0.
+# The sweep runs at 8 requests in flight (comparable with the A10G records) and at 1 (single-question latency).
+# Weights (once): uv run --group modal s1 download openjev/openjev b4a89f5884f3482a5e894b2e7ff01db8ea033726 openjev
+#   uv run --group modal s1 submit configs/openjev_jeval_smoke_h100.toml
+benchmarks = ["jeval"]
+
+[launch]
+orchestrator = "modal"
+gpu = "H100"          # pinned as "H100!" by the launcher, so Modal cannot swap in an H200
+gpus = 1
+cpus = 8
+mem = "96G"
+time = "02:00:00"
+
+[invariants]
+gpu_metrics = "detailed"   # every Modal run (superset of basic); the M1/M2 records committed on 2026-11-08 were basic
+gpu_metrics_schema = 1
+gpu = "auto"
+require_gpu = "H100"
+tensor_parallel_size = 1
+quantization = "none"      # bf16, as on the A10G runs; FP8 on H100 is a separate experiment
+max_model_len = 16384
+
+[params]
+model = "openjev"
+jeval_limit = 200
+jeval_seed = 0
+
+[sweep]
+jeval_concurrency = [8, 1]

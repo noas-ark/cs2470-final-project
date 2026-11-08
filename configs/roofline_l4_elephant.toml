@@ -1,0 +1,29 @@
+# elephant-1 on the same L4 roofline as configs/roofline_l4.toml (same subset, ceilings and settings), served
+# by its own engine in runtimes/elephant (torch 2.8; build it once: sbatch runtimes/elephant/setup.sh). Its
+# LM head runs in fp32 (head_dtype, as upstream), so that matmul is CUDA-core FP32, not tensor-core bf16.
+# Weights (each once): sbatch scripts/download_model.sh <repo> <catalog revision>   (see `uv run s1 models`)
+# `gpu` is mislabeled (it handed out an A10G on 2026-11-04); gpu-spec types its GPUs, and require_gpu refuses
+# anything but an L4 (its L4 nodes have 8 CPUs and 31 GB RAM):
+#   uv run s1 submit configs/roofline_l4_elephant.toml -p gpu-spec --gpu-type l4 -g 1 -c 8 --mem 28G -t 02:00:00
+# Hardware counters (Nsight Compute, a few questions per model, slow: every kernel is replayed):
+#   uv run s1 submit configs/roofline_l4_elephant.toml --ncu 4 -p gpu-spec --gpu-type l4 -g 1 -c 8 --mem 28G -t 05:00:00
+benchmarks = ["roofline"]
+
+[invariants]
+gpu = "auto"
+require_gpu = "L4"
+dtype = "bfloat16"
+measure_ceilings = true
+max_prompt_tokens = 16384
+semif_max_options = 16
+
+[params]
+roofline_limit = 200
+roofline_seed = 0
+roofline_max_tokens = 1024
+roofline_max_options = 16
+roofline_warmup = 8
+roofline_counted = 8
+roofline_tokenizer_file = "$MODELS_DIR/Qwen3.5-4B-Base/tokenizer.json"
+model = "elephant-1"
+

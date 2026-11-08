@@ -1,0 +1,39 @@
+# Roofline of the ~8B decision models on one NVIDIA L4: theoretical FLOPs and compulsory bytes per forward
+# (s1/flops.py), measured GPU time, and the GPU's measured ceilings (bf16 GEMM, fp32 GEMM, DRAM copy), on a
+# fast JEVal subset every model can answer: 200 choice/noul questions with <= 16 options and <= 1024 tokens
+# (state + question, Qwen3.5 tokenizer), one at a time. Six models share SemIf's letter-softmax readout on
+# one transformers runtime, so only the architecture differs. elephant-1 is configs/roofline_l4_elephant.toml.
+# Weights (each once): sbatch scripts/download_model.sh <repo> <catalog revision>   (see `uv run s1 models`)
+# `gpu` is mislabeled (it handed out an A10G on 2026-11-04); gpu-spec types its GPUs, and require_gpu refuses
+# anything but an L4 (its L4 nodes have 8 CPUs and 31 GB RAM):
+#   uv run s1 submit configs/roofline_l4.toml -p gpu-spec --gpu-type l4 -g 1 -c 8 --mem 28G -t 02:00:00
+# Hardware counters (Nsight Compute, a few questions per model, slow: every kernel is replayed):
+#   uv run s1 submit configs/roofline_l4.toml --ncu 4 -p gpu-spec --gpu-type l4 -g 1 -c 8 --mem 28G -t 05:00:00
+benchmarks = ["roofline"]
+
+[invariants]
+gpu = "auto"
+require_gpu = "L4"
+dtype = "bfloat16"
+measure_ceilings = true
+max_prompt_tokens = 16384
+semif_max_options = 16
+
+[params]
+roofline_limit = 200
+roofline_seed = 0
+roofline_max_tokens = 1024
+roofline_max_options = 16
+roofline_warmup = 8
+roofline_counted = 8
+roofline_tokenizer_file = "$MODELS_DIR/Qwen3.5-4B-Base/tokenizer.json"
+
+[sweep]
+model = [
+    "qwen35-9b.zeroshot",
+    "jevk5-9b",
+    "qwen3-8b.zeroshot",
+    "olmoe-1b-7b.zeroshot",
+    "lfm2-8b-a1b.zeroshot",
+    "granite4-h-tiny.zeroshot",
+]

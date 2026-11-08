@@ -25,6 +25,38 @@ answers came from prompts longer than the 16,384-token context. For reference, t
 Table 1 reports hosted Jev at 78.4% and Kev-27b at 77.2% on all 11,257 questions. Latency is far
 above the model card's H100 figures because A10Gs are slower and lack NVLink.
 
+Kev-4B ([jaredpalmer/kev-4b](https://huggingface.co/jaredpalmer/kev-4b), a LoRA adapter on a 4B Qwen base) on the
+same JEVal sample of 200 questions, bf16 on **one L4**, through upstream's own server (`kev.serve`), measured
+warm (`jeval_warmup`: one untimed pass first, then the prefix cache is emptied):
+
+| Run | Base | Accuracy | ECE | Brier | Invalid | Latency mean / p99 (concurrency 1) | q/s (concurrency 8) | GPU util |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| [`20261030-144131-594ef3c9`](results/20261030-144131-594ef3c9.json) / [`…144511…`](results/20261030-144511-1354270f.json) | Qwen3.5-4B (hybrid) | **70.9%** ±6.4 | 0.137 | 0.391 | 6 | 304 ms / 2.5 s | 3.55 | 98% |
+| [`20261030-144732-3359fb5e`](results/20261030-144732-3359fb5e.json) / [`…145138…`](results/20261030-145138-ad478289.json) | Qwen3-4B (attention) | 58.7% ±6.9 | 0.132 | 0.514 | 6 | 618 ms / 7.1 s | 1.67 | 99% |
+
+The hybrid runs with upstream's fused Qwen3.5 kernels and CUDA graphs. Its first run, cold and without them, took
+1.2 s per question at 41% GPU utilization (`20261030-140509-a01f91d9`). The qwen3 latency is provisional: upstream
+serves attention-only bases in a packed form whose explicit attention mask rules out flash attention, and a plain
+causal pass measured 379 ms (`20261030-141249-3126d051`, cold). The invalid answers are prompts over 16,384 tokens.
+
+**Decision-model recipes on one L4 (roofline, 2026-11-04).** The same 200 short JEVal questions (≤1,024 tokens,
+≤16 options), one per request, every forward timed with CUDA events and costed with `s1.flops`.
+The measured L4 ceilings are 59 TFLOP/s bf16 and 231 GB/s, which puts the ridge at about 257 FLOP/B.
+The analysis is in [`results/REPORT.md`](results/REPORT.md#findings) (prose: `results/roofline_findings.md`).
+
+| Model | Recipe | Accuracy | GPU ms/q | GB read/q | FLOP/B | % of roof |
+|---|---|---:|---:|---:|---:|---:|
+| elephant-1 | Qwen3.5-9B full FT, fp32 slot head, state + forked questions (2 passes) | **75.5%** | 225 | 36 | 120 | 70% |
+| jevk5-9b | Qwen3.5-9B full FT, letter softmax over the vocab head | 70.5% | 156 | 16 | 291 | 51% |
+| qwen35-9b.zeroshot | its zero-shot base (control) | 72.5% | 154 | 16 | 291 | 51% |
+| kev-4b.qwen3 | Qwen3-4B LoRA + pointer head, one packed pass | 65.5% | **66** | 7.4 | 236 | 48% |
+| kev-4b.hybrid | Qwen3.5-4B LoRA + pointer head, fused kernels + CUDA graphs (2 passes) | 65.0% | 89 | 14.5 | 130 | 70% |
+| laya.english | ModernBERT-large encoder + marker head, fp32 | 44.0% | 20 | 1.4 | 105 | 31% |
+
+At batch 1 every recipe is bound by memory, so GPU time follows the bytes read. A vocab-sized readout head
+and a two-pass state/question split are the expensive choices; kev's pointer head avoids the first and its
+graphs reach the roof. Accuracy is ±6.5 points at this sample size.
+
 ## What a run record looks like
 
 ```json
@@ -93,6 +125,10 @@ Shipped configs: `configs/openjev_jeval_smoke.toml` (200 questions, about 17 min
 | | Name | Notes |
 |---|---|---|
 | Model | `openjev` | Starts vLLM plus the model's own `helper/shim.py` (`POST /v1/systemone`) with the model card's calibration, and stops both after the run. `openjev_endpoint` reuses a running helper instead. On A10G it needs `quantization = "none"`, because the card's fp8 recipe requires compute capability 8.9 or higher. |
+| Model | `kev-4b.hybrid`, `kev-4b.qwen3` | Backend `kev`: our reimplementation of Kev's inference (LoRA merged into the Qwen3.5-4B-Base / Qwen3-4B-Base backbone, pointer head over `</opt>` and `<decide>` hidden states, head.pt's temperature). One L4. |
+| Model | `semif.direct`, `semif.reranker` | Backend `semif`: controls with no decision training. Qwen3.5-4B's option-letter logits, or Qwen3-Reranker-4B's yes/no log-odds per option. Upstream's 16-option cap makes ~20% of JEVal invalid. One L4. |
+| Model | `laya.english`, `laya.multilingual` | Backend `laya`: the model repo's own `rl_agent_api.py`, run only if its sha256 matches the reviewed file. Small encoders that cut the state to fit 512 / 1024 tokens. Any GPU. |
+| Model | `bongard-mini` | Backend `bongard`: upstream's `Predictor` from a pinned checkout of AgentBull/bongard (`scripts/fetch_code.sh`). RTX Pro 4500 only (`gpu-g7-reserved`); the backend refuses other GPUs. |
 | Benchmark | `jeval` | JEVal (arXiv:2610.03935), pinned revision, 11,257 questions over 10 domains. It reports accuracy with invalid answers counted wrong, ECE (15 bins) and Brier score as in the paper, plus score-question accuracy/MAE and latency percentiles. Subsample with `jeval_limit` / `jeval_seed`. |
 | Benchmark | `shape_sweep` | Model-agnostic cost per question over a `[grid]` of `state_tokens` x `questions_per_request` (synthetic states, JEVal-shaped choice questions, concurrency 1). Each point repeats for `shape_min_point_s` and gets its own GPU sampling; latency is divided by the question count. Headline `shape_sweep_latency_ms` (lower is better), per-point keys `shape_sweep_t{T}_q{Q}_*`. Points above a model's optional `max_state_tokens` are counted as skipped, not wrong. Token counting is a pluggable `state_tokenizer` (only the approximate `approx_words` so far). Example: `configs/openjev_shape_sweep_smoke.toml`. |
 
@@ -110,11 +146,13 @@ src/s1/
   gpu_stats.py    nvidia-smi sampler
   report.py       results/REPORT.md + report.html (run by the pre-commit hook)
   models/         spec.py (ModelSpec), catalog.py (the list of specs), answers.py (System One answer
-                  assembly), backends/ (lazy table + vllm_shim.py, the OpenJev serving code)
+                  assembly), backends/ (lazy table; vllm_shim.py serves OpenJev, kev/semif/laya/
+                  bongard.py run in-process with transformers, gpu.py is their shared GPU guard)
   benchmarks/     jeval.py, shape_sweep.py
 configs/          experiment configs
 results/          run records (committed)
-scripts/          download_model.sh (sbatch), alloc.sh (interactive GPU shell in tmux), hooks/pre-commit
+scripts/          download_model.sh (sbatch; optional revision + dir name), fetch_code.sh (pinned git
+                  checkout of a model's runtime code), alloc.sh (interactive GPU shell in tmux), hooks/pre-commit
 tests/            pytest; fakes in conftest.py
 ```
 

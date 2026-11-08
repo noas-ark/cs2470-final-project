@@ -1,0 +1,38 @@
+# elephant-1's serving runtime, as its setup.sh pins it (pytorch/pytorch:2.8.0-cuda12.8 image + constraints.txt),
+# minus the training/eval packages serving does not import. Its own venv, separate from the harness's
+# (torch 2.13, transformers 5.17): the harness talks to worker.py over a pipe.
+# Build it on a compute node: sbatch runtimes/elephant/setup.sh
+[project]
+name = "elephant-runtime"
+version = "0"
+requires-python = "==3.11.*"  # the 2.8.0 image's Python
+dependencies = [
+    "torch==2.8.0",
+    "torchvision==0.23.0",
+    "transformers==5.19.0",
+    "accelerate==1.15.0",
+    "safetensors==0.8.0",
+    "tokenizers==0.23.3",
+    "huggingface_hub==2.2.0",
+    "pydantic==2.14.1",
+    "fastapi==0.143.1",
+    "uvicorn==0.54.0",
+    "pillow==11.0.0",
+    "einops==0.8.2",
+    "flash-linear-attention==0.5.2",
+    "fla-core==0.5.2",
+    "qev",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+qev = { path = "OneJev", editable = true }  # OmniJev/OneJev @81ce62f + elephant-1's serve.patch (setup.sh)
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true

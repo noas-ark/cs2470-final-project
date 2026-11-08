@@ -1,0 +1,72 @@
+{
+    "20261030-144131-594ef3c9": {
+        "invariants": {
+            "gpu": "NVIDIA L4",
+            "max_prompt_tokens": 16384
+        },
+        "params": {
+            "jeval_limit": 200,
+            "jeval_seed": 0,
+            "jeval_warmup": true,
+            "model": "kev-4b.hybrid",
+            "jeval_concurrency": 1,
+            "spec_group": "D-hybrid",
+            "spec_repo": "jaredpalmer/kev-4b",
+            "spec_revision": "139fdd94f1b6a6ad80cc15e08fcb99cac885a101",
+            "spec_base_repo": "Qwen/Qwen3.5-4B-Base",
+            "spec_base_revision": "1001bb4d826a52d1f399e183466143f4da7b741b",
+            "spec_code_repo": "jaredpalmer/kev",
+            "spec_code_revision": "2074cc44256200bb37540103fa4572901faa10f3",
+            "spec_license": "apache-2.0",
+            "spec_weights_gb": 9.455001879,
+            "question_mode": "row"
+        },
+        "results": {
+            "jeval": {
+                "jeval_accuracy": 0.7091836734693877,
+                "jeval_ece": 0.13713578947368418,
+                "jeval_brier": 0.3905002072631579,
+                "jeval_choice_accuracy": 0.6936416184971098,
+                "jeval_noul_accuracy": 0.8260869565217391,
+                "jeval_score_accuracy": 0.75,
+                "jeval_score_mae": 0.3053,
+                "jeval_n": 200.0,
+                "jeval_invalid": 6.0,
+                "jeval_questions_per_s": 3.378098058722917,
+                "jeval_latency_ms": 304.14304669586,
+                "jeval_latency_ms_std": 547.6683801008288,
+                "jeval_latency_ms_p90": 831.4016283997726,
+                "jeval_latency_ms_p95": 1922.2771263000366,
+                "jeval_latency_ms_p99": 2493.7058120497927
+            },
+            "jeval/nvidia_smi": {
+                "gpu_util_pct": 98.23529411764706,
+                "gpu_util_pct_std": 5.913530820265867,
+                "gpu_util_pct_p90": 100.0,
+                "gpu_util_pct_p95": 100.0,
+                "gpu_util_pct_p99": 100.0,
+                "gpu_count": 1.0,
+                "gpu_mem_used_mb_max": 22242.0,
+                "gpu_mem_used_mb_mean": 22242.0,
+                "gpu_mem_total_mb": 23034.0,
+                "gpu_power_w_total_mean": 70.88436974789916,
+                "gpu_power_w_max": 75.03,
+                "gpu_energy_wh": 1.1704257994987737,
+                "gpu_temp_c_max": 68.0,
+                "gpu_samples": 119.0,
+                "gpu_sampled_s": 59.44234100099993
+            }
+        },
+        "meta": {
+            "started": "2026-10-30T14:41:31",
+            "git_commit": "3644a93",
+            "host": "gpu-dy-gpu-cr-1",
+            "config": "configs/kev_jeval_smoke.toml",
+            "slurm_job_id": "5194",
+            "load_s": 85.248,
+            "jeval_warmup_s": 73.935,
+            "jeval_s": 59.606,
+            "duration_s": 219.595
+        }
+    }
+}

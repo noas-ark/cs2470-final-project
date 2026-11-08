@@ -1,0 +1,42 @@
+# Same sweep as openjev_shape_sweep_cache.toml, with gpu_metrics = "detailed" (schema 1: per-GPU
+# util/power/clocks/throttle, memory-controller busy and PCIe MB/s; see AGENTS.md "GPU metrics").
+# Only the two gpu_metrics lines in [invariants] differ. The original description follows.
+#
+# Cache-aware request-shape sweep (follow-up to the first shape_sweep run, job 4059).
+#
+# That run repeated identical requests, so vLLM's prefix cache answered every repetition after the first.
+# vLLM caches this hybrid (Gated DeltaNet) model's prompts in blocks of 784 tokens, so prompts below 784
+# tokens can never hit the cache, and longer ones only in whole blocks (see AGENTS.md).
+#
+# Here every repetition uses a fresh state (shape_unique_states), state length is counted with one real
+# reference tokenizer (Qwen's, from the model directory), and the run is repeated with the cache on and off.
+#
+# Grid: T is STATE tokens; the prompt adds ~80 tokens (chat template + one question), so the 784 and 1568
+# block boundaries fall near T = 705 and T = 1489. 640/720 and 1400/1500 sit on either side of them.
+# 7 x 4 points; each point runs >= 5 s. Two runs (cache on, cache off) = two model loads (~15-20 min each),
+# so ask for 2 h:
+#   uv run s1 submit configs/openjev_shape_sweep_cache_detailed.toml -p gpu-parallel -g 4 -c 32 --mem 160G -t 02:00:00
+benchmarks = ["shape_sweep"]
+
+[invariants]
+gpu = "auto"
+tensor_parallel_size = 4
+quantization = "none"
+gpu_metrics = "detailed"
+gpu_metrics_schema = 1
+max_model_len = 16384
+state_tokenizer = "file"
+state_tokenizer_file = "$MODELS_DIR/openjev/tokenizer.json"
+
+[params]
+model = "openjev"
+shape_warmup = 1
+shape_min_point_s = 5.0
+shape_unique_states = true
+
+[sweep]
+prefix_caching = [true, false]
+
+[grid]
+state_tokens = [32, 256, 640, 720, 1400, 1500, 2048]
+questions_per_request = [1, 4, 16, 32]

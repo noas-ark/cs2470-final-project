@@ -1,0 +1,26 @@
+# Smoke check for both Kev-4B variants (hybrid Qwen3.5 base vs plain-attention Qwen3 base): 200 random
+# JEVal questions each, through upstream's own server (kev.serve: bf16, fused kernels and CUDA graphs on the
+# hybrid). Measured warm: one untimed pass first (kernel compilation, graph capture), then the prefix cache is
+# emptied. Concurrency 1 gives per-decision latency, 8 batched throughput (as the openjev runs).
+# One L4 is plenty (~9 GB bf16). Upstream code: scripts/fetch_code.sh jaredpalmer/kev 2074cc44256200bb37540103fa4572901faa10f3 kev-code
+# Weights first (each once; sbatch on the general partition):
+#   sbatch scripts/download_model.sh jaredpalmer/kev-4b 139fdd94f1b6a6ad80cc15e08fcb99cac885a101 kev-4b-hybrid
+#   sbatch scripts/download_model.sh jaredpalmer/kev-4b c4bfa11b0dc07691884f2d97f1c4c4c05c92e416 kev-4b-qwen3
+#   sbatch scripts/download_model.sh Qwen/Qwen3.5-4B-Base 1001bb4d826a52d1f399e183466143f4da7b741b
+#   sbatch scripts/download_model.sh Qwen/Qwen3-4B-Base 906bfd4b4dc7f14ee4320094d8b41684abff8539
+# Then:
+#   uv run s1 submit configs/kev_jeval_smoke.toml -p gpu -g 1 -c 8 --mem 28G -t 03:00:00
+benchmarks = ["jeval"]
+
+[invariants]
+gpu = "auto"
+max_prompt_tokens = 16384  # same context as the openjev runs; longer rows count as invalid
+
+[params]
+jeval_limit = 200
+jeval_seed = 0
+jeval_warmup = true
+
+[sweep]
+model = ["kev-4b.hybrid", "kev-4b.qwen3"]
+jeval_concurrency = [1, 8]
