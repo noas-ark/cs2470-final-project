@@ -1,0 +1,38 @@
+# Questions-per-request (Q) axis, SMOKE: every model of roofline_qpr_sweep.toml once on a Modal L4, at the
+# corners of the grid (Q = 1, 9, 32 at 256 and 2,048 state tokens, 2 timed requests per point). It checks each
+# backend loads on Modal and answers Q questions in one decide() at the longest state, and that bongard-mini
+# (15 GB bf16) fits a 24 GB L4 at 2,048 tokens x 32 questions. Not for analysis: too few requests per point.
+#   uv run --group modal s1 submit configs/roofline_qpr_smoke.toml
+benchmarks = ["roofline"]
+
+[launch]
+orchestrator = "modal"
+gpu = "L4"
+gpus = 1
+cpus = 8
+mem = "32G"
+time = "01:00:00"
+
+[invariants]
+gpu_metrics = "detailed"
+gpu_metrics_schema = 1
+gpu = "auto"
+dtype = "bfloat16"
+measure_ceilings = true
+max_prompt_tokens = 16384
+semif_max_options = 16
+
+[params]
+roofline_seed = 0
+roofline_max_options = 16
+roofline_qpr_requests = 2
+roofline_qpr_warmup = 1
+roofline_tokenizer_file = "$MODELS_DIR/Qwen3.5-4B-Base/tokenizer.json"
+bongard_branch_batch = 8   # upstream's default, recorded so the batch boundary (Q = 9, 17, 25) is explicit
+
+[sweep]
+model = ["bongard-mini", "laya.multilingual", "kev-4b.hybrid", "kev-4b.qwen3", "semif.direct", "semif.reranker"]
+
+[grid]
+roofline_state_tokens = [256, 2048]
+roofline_questions_per_request = [1, 9, 32]

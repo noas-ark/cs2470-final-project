@@ -1,0 +1,50 @@
+# Questions-per-request (Q) axis: hypothesis H3 (sharing one read of the state across many questions is these
+# designs' hardware advantage). Each point is ONE decide() call with Q questions against one state, at a fixed
+# state length (benchmarks/roofline_q.py): the same 5 JEVal states (the length axis's, cut to 256 and 2,048
+# reference tokens) at every point, and the first Q questions of one fixed 32-question pool.
+# Models, by how they handle a request's questions (the record's params.question_mode / mode):
+#   bongard-mini       shared_encoder: encoder reads state + all instructions once; decoder batches of 8 questions
+#                      attend to one shared copy of the state's K/V (steps expected at Q = 9, 17, 25)
+#   laya.multilingual  reencode: every question is its own encoder row with the state (1,024-token cap), all rows
+#                      of a request in one batched pass
+#   kev-4b.hybrid/.qwen3  row: the state is prefilled once (prefix cache), then one row per question attends to it
+#   semif.direct       row: one full prompt (state included) per question, one forward each: no sharing at all
+#   semif.reranker     one batch of (question, option) prompts per question, each with the full state
+# Same harness settings as the length sweep (roofline_sweep_*_lengths.toml) where they apply; [launch] fans out
+# over the length sweep's five Modal GPUs, gpu_metrics detailed, require_gpu set per GPU by the launcher (it
+# overrides bongard-mini's RTX Pro 4500 pin).
+#   uv run --group modal s1 submit configs/roofline_qpr_sweep.toml              (all five GPUs)
+#   uv run --group modal s1 submit configs/roofline_qpr_sweep.toml --gpu H100   (one of them)
+benchmarks = ["roofline"]
+
+[launch]
+orchestrator = "modal"
+gpu = ["L4", "A100-80GB", "H100", "H200", "B200"]
+gpus = 1
+cpus = 8
+mem = "32G"
+time = "02:00:00"
+
+[invariants]
+gpu_metrics = "detailed"
+gpu_metrics_schema = 1
+gpu = "auto"
+dtype = "bfloat16"
+measure_ceilings = true
+max_prompt_tokens = 16384
+semif_max_options = 16
+
+[params]
+roofline_seed = 0
+roofline_max_options = 16
+roofline_qpr_requests = 5
+roofline_qpr_warmup = 1
+roofline_tokenizer_file = "$MODELS_DIR/Qwen3.5-4B-Base/tokenizer.json"
+bongard_branch_batch = 8
+
+[sweep]
+model = ["bongard-mini", "laya.multilingual", "kev-4b.hybrid", "kev-4b.qwen3", "semif.direct", "semif.reranker"]
+
+[grid]
+roofline_state_tokens = [256, 2048]
+roofline_questions_per_request = [1, 2, 4, 8, 9, 16, 17, 24, 25, 32]
