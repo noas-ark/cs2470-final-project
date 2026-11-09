@@ -38,7 +38,7 @@ semif_max_options = 16
 roofline_seed = 0
 roofline_max_options = 16
 roofline_qpr_requests = 5
-roofline_qpr_warmup = 1
+roofline_qpr_warmup = 3   # the L4 smoke's first point (laya, Q=1 at 256) was a cold start one warm-up missed
 roofline_tokenizer_file = "$MODELS_DIR/Qwen3.5-4B-Base/tokenizer.json"
 bongard_branch_batch = 8
 
