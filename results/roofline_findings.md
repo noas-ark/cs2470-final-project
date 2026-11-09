@@ -94,6 +94,49 @@ per length.
 - **Measure ceilings and check the card.** Measured peaks are 47–85% of the datasheet, and "A100-80GB" on
   Modal can be a PCIe card with a lower roof.
 
+### Questions per request (hypothesis H3)
+
+H3: sharing one read of the state across many questions is the only real hardware advantage of these designs;
+achieved FLOP/s per pass should rise with Q (questions per request), and most for the high-ridge L4. The Q axis
+(`benchmarks/roofline_q.py`, 2026-11-09, Modal L4, A100 SXM, H100, H200, B200) sends Q = 1-32 questions against
+one state in one request, at 256 and 2,048 reference tokens: the same 5 states at every point and the first Q of
+one fixed 32-question pool, 5 timed requests per point, 0 invalid answers in 30 runs.
+
+- **Sharing the state cuts the cost per question about 10x at Q = 32, and it is less work, not better
+  utilization.** At 2,048 tokens bongard-mini (encoder once, decoder batches of 8 against one shared K/V copy)
+  and both Kev variants (state prefilled once, a row per question) need 0.06-0.08x the FLOPs per question at
+  Q = 32 that they need at Q = 1, and on the L4 and A100 their GPU time per question falls by about the same
+  factor (bongard 0.10x on the L4, 0.13x on the A100; kev hybrid 0.08x; kev attention-only 0.06x). Achieved
+  TFLOP/s stays flat or falls (bongard L4 30 -> 24, A100 82 -> 50, B200 189 -> 109; kev hybrid 40 -> 30 on
+  the L4, 276 -> 225 on the B200): the added question rows are small, lower-intensity passes beside a state
+  pass that already sat near the roof. Only at 256 tokens, where a one-question pass is far left of the ridge,
+  does FLOP/s rise with Q (bongard 0.30x FLOPs per question; kev hybrid 27 -> 35 TFLOP/s on the L4).
+- **The controls behave as designs that share nothing should.** semif.direct (a full prompt per question) holds
+  0.99-1.01x GPU time per question on the L4, A100 and B200, and 0.99x FLOPs everywhere. semif.reranker batches
+  a question's options, not its questions: flat TFLOP/s; its 0.73x FLOPs per question is the pool's mix of option
+  counts (its first question has 4 options, the pool averages ~3.2).
+- **Laya gains the opposite way.** Each question is its own encoder row with the state (1.00x FLOPs per
+  question), but a request's rows run as one batch, so FLOP/s rises with Q on the big GPUs (B200 25 -> 164,
+  H100 25 -> 123 at 2,048, cut to 1,024 tokens) and its cost per question falls 0.15-0.25x there, against
+  0.74x on the L4, which one row already fills. That is plain batching, available to any design.
+- **Bongard's batches of 8 show as steps.** Its forwards per request go 3 -> 4 at Q = 9 (encoder, K/V projection,
+  one decoder pass per 8 questions); on the L4, A100 and B200 each new decoder pass adds 30-107 ms at Q = 9, 17
+  and 25, against 0-36 ms per question inside a batch. On the H100 and H200 the step at 25 is missing.
+- **No ridge-point ordering.** The cost-per-question ratio at Q = 32 is set by the FLOP amortization and is
+  about the same on every GPU (kev hybrid 0.07-0.08x on all five); the L4 gains no more than the others.
+
+So H3 holds in its first half (a shared state is a large, real per-question saving, 10-16x at Q = 32 and 2,048
+tokens, which re-encoding designs cannot get), but not by its stated mechanism: past a few hundred state tokens
+the saving is work avoided, with utilization flat or lower, and it does not grow with the GPU's ridge point.
+
+Caveat for this section: on the sm90+ GPUs (H100, H200, B200) PyTorch's default cuDNN attention builds a plan
+per new (query, key) shape on the host. Every pool question is a new shape the first time it appears, and points
+run in ascending Q, so a Q that adds several new questions pays more (semif.direct on the H100: 62.7 ms per
+question at Q = 8, 4 new, against 38.7 at Q = 9, 1 new), and their cost-per-question curves fall faster than the
+work does (semif.direct 0.53-0.71x there). The first point of most sm90+ runs (Q = 1 at 256) is slow the same
+way. The statements above rest on the L4 and A100 and on FLOP counts; the H100 and H200 timings are biased in
+favor of H3.
+
 ### Caveats
 
 - **One run per (model, GPU, mode).** No repeats, so differences of a few percent are noise. Platforms are
