@@ -55,6 +55,7 @@ def profile_args(report: str, sample: str = "process-tree") -> tuple[str, ...]:
     return (
         "profile",
         "--trace=cuda,osrt",
+        "--cuda-graph-trace=node",  # a graph's kernels one by one; the default traces a graph as one range
         f"--sample={sample}",
         f"--cpuctxsw={'process-tree' if sample != 'none' else 'none'}",
         "--capture-range=cudaProfilerApi",

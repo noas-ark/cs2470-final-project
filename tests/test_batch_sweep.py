@@ -64,6 +64,7 @@ def test_nsys_command_lines():
     assert args[0] == "profile"
     assert "--capture-range=cudaProfilerApi" in args
     assert "--sample=process-tree" in args
+    assert "--cuda-graph-trace=node" in args  # else a CUDA graph's kernels are missing from kern_sum
     assert args[-2:] == ("-o", "logs/nsys-1-cfg-0")
     assert "--cpuctxsw=none" in nsys.profile_args("x", "none")
     with pytest.raises(ValueError, match="sample"):

@@ -73,6 +73,9 @@ VOLUMES: Mapping[str, str] = {MODELS_MOUNT: "s1-models", HF_MOUNT: "s1-hf-cache"
 RUN_DIR = "{run_dir}"  # placeholder in planned args, filled in the container with /runs/<function call id>
 MAX_TIMEOUT_S = 24 * 3600
 EXTRAS = {"openjev", "echo", "hf_secret", "runtime"}
+# Spawned runs keep going if this client loses its connection (a laptop's network drop stopped every attached
+# app at once on 2026-11-09); their records and logs stay on the s1-runs volume under /runs/<call id>/.
+DETACH = True
 DOWNLOAD_CPU, DOWNLOAD_MEMORY_MIB, DOWNLOAD_TIMEOUT_S = 8.0, 16 * 1024, 4 * 3600  # as download_model.sh
 
 
@@ -445,7 +448,7 @@ class ModalLauncher:
                     return Outcome(res.gpu, e.call_id, e.records, e.logs, error=str(e))
             return Outcome(res.gpu, result["call_id"], tuple(records), tuple(written))
 
-        with modal.enable_output(), app.run():
+        with modal.enable_output(), app.run(detach=DETACH):
             for i, (res, fn, p) in enumerate(zip(resources, fns, plans, strict=True)):
                 try:
                     calls[i] = fn.spawn(self._payload(p))
@@ -533,7 +536,7 @@ class ModalLauncher:
         fn = self._function(modal, app, p)
         call_id = ""
         try:
-            with app.run():
+            with app.run(detach=DETACH):
                 call = fn.spawn(self._payload(p))
                 call_id = str(call.object_id)
                 log(f"modal function call {call_id}")
