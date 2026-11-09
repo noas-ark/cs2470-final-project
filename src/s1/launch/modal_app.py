@@ -239,11 +239,10 @@ def plan(
     kind = None if resources.gpu is None else gpu_kind(resources.gpu)
     cfg_remote = _cfg_remote(cfg)
     args = [cfg_remote if a == str(cfg) else a for a in s1_args]
-    if args[:1] in (["run"], ["ncu"]):
+    if args[:1] in (["run"], ["ncu"], ["nsys"]):
         args += ["--results-dir", f"{RUN_DIR}/results"]
-    if args[:1] in (["run"], ["ncu"]):
         required = _require_gpu_args(cfg, kind)
-        args += required if args[:1] == ["run"] else []  # `s1 ncu` takes no --set
+        args += required if args[:1] == ["run"] else []  # `s1 ncu` / `s1 nsys` take no --set
     hf_secret = extras.get("hf_secret")
     return ModalPlan(
         gpu=modal_gpu(resources.gpu, resources.gpus),

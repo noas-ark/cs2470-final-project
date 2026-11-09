@@ -192,6 +192,26 @@ class SemIf:
         rows = {key: to_row(q, self.max_options) for key, q in questions.items()}
         return {key: answer(row, self.scores(state, row)) for key, row in rows.items()}
 
+    def decide_batch(self, requests: Sequence[tuple[str, Mapping[str, object]]]) -> dict[str, int]:
+        """Every request's questions as rows of one left-padded forward (benchmarks/batch_sweep.py, direct
+        mode only): the option-letter logits are copied to the host, the softmax is skipped."""
+        if self.mode != "direct":
+            raise ValueError("decide_batch supports semif mode = direct only")
+        prompts: list[list[int]] = []
+        for state, questions in requests:
+            for q in questions.values():
+                row = to_row(q, self.max_options)
+                prompt = self.tokenizer.apply_chat_template(  # ty: ignore[unresolved-attribute]
+                    direct_messages(state, row),
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    enable_thinking=False,
+                )
+                prompts.append(self._checked(self.encode(prompt)))
+        logits = self._last_logits(prompts)
+        logits[:, self.letter_ids].cpu()
+        return {"decisions": len(prompts), "real_tokens": sum(len(p) for p in prompts)}
+
     def profile_info(self) -> dict[str, object]:
         if self.recorder is None:
             self.recorder = profiling.ForwardRecorder(self.model)

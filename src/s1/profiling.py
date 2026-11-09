@@ -251,3 +251,27 @@ def profile_kernels(fn: Callable[[], object]) -> list[tuple[str, float]]:
         for e in events
         if e.device_type == cuda and e.time_range.elapsed_us() > 0
     ]
+
+
+def trace_activity(fn: Callable[[], object]) -> list[tuple[str, str, float]]:
+    """Run `fn` once under torch.profiler (CPU + CUDA activity) and return (name, kind, us) for every CUDA
+    runtime/driver call on the host (kind "api": cudaLaunchKernel, cudaGraphLaunch, cudaStreamSynchronize...)
+    and every GPU activity (kind "kernel", or "copy" for memcpy/memset). The in-process stand-in for an nsys
+    `cuda_api_sum` + `cuda_gpu_kern_sum` (benchmarks/batch_sweep.py); CUPTI tracing, so it needs no counter
+    permission, but it slows the host, so time `fn` elsewhere."""
+    import torch  # noqa: PLC0415
+
+    cuda = torch.autograd.DeviceType.CUDA
+    torch.cuda.synchronize()
+    acts = [torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA]
+    with torch.profiler.profile(activities=acts) as prof:
+        fn()
+        torch.cuda.synchronize()
+    out: list[tuple[str, str, float]] = []
+    for e in prof.events() or []:
+        name, us = str(e.name), float(e.time_range.elapsed_us())
+        if e.device_type == cuda:
+            out.append((name, "copy" if name.startswith(("Memcpy", "Memset")) else "kernel", us))
+        elif name.startswith(("cuda", "cu")) and not name.startswith("cudnn"):
+            out.append((name, "api", us))
+    return out

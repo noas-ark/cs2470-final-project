@@ -1,0 +1,49 @@
+# H2 (Laya is launch-bound at batch 1): batch-size sweep, CPU share of latency, and the launch-overhead
+# ablation for Laya (laya.english, ModernBERT-large, ~0.4B). benchmarks/batch_sweep.py.
+# B independent requests (own state, one question each) per forward, B = 1..64, at a short state (128
+# reference tokens, where launch overhead should dominate) and a long one (1024; English Laya reads at most
+# 512 tokens per row, so that point is its 512-token cap). Pool: 64 seeded JEVal rows whose own state is at
+# least 1024 reference tokens, cut to each length. Each point: every batch once untimed, then timed, then
+# 2 batches under torch.profiler (kernel time, kernel count, launch calls).
+# [sweep] laya_mode is the ablation: eager (upstream's path), graphs (one CUDA graph per shape), compile
+# (torch.compile, no graphs), compile_graphs (reduce-overhead). Every mode pads widths to a multiple of 64,
+# so all four run the same shapes (and graphs a bounded number of them).
+# The host CPU (meta.cpu_model) drives the eager floor on Modal: compare GPUs only on matching hosts.
+#   uv run --group modal s1 submit configs/batch_sweep_laya.toml --gpu L4             (one GPU)
+#   uv run --group modal s1 submit configs/batch_sweep_laya.toml                      (all five)
+#   uv run --group modal s1 submit configs/batch_sweep_laya.toml --gpu L4 --nsys 64   (Nsight Systems split)
+benchmarks = ["batch"]
+
+[launch]
+orchestrator = "modal"
+gpu = ["L4", "A100-80GB", "H100", "H200", "B200"]
+gpus = 1
+cpus = 8
+mem = "28G"
+time = "02:00:00"
+
+[invariants]
+gpu_metrics = "detailed"
+gpu_metrics_schema = 1
+gpu = "auto"
+measure_ceilings = true
+laya_pad_multiple = 64
+
+[params]
+model = "laya.english"
+batch_seed = 0
+batch_pool = 64
+batch_min_decisions = 32
+batch_min_batches = 4
+batch_trace = 2
+batch_warmup = 8
+batch_max_options = 16
+batch_max_question_tokens = 512
+batch_tokenizer_file = "$MODELS_DIR/Qwen3.5-4B-Base/tokenizer.json"
+
+[sweep]
+laya_mode = ["eager", "graphs", "compile", "compile_graphs"]
+
+[grid]
+batch_state_tokens = [128, 1024]
+batch_sizes = [1, 2, 4, 8, 16, 32, 64]
