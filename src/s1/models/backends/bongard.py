@@ -162,7 +162,7 @@ def build(spec: ModelSpec, settings: dict[str, Scalar]) -> Bongard:
         sys.path.insert(0, str(code_dir))
     predictor = importlib.import_module("bongard.inference").Predictor.load(
         checkpoint,
-        device=str(device),
+        device=device.type,  # upstream accepts only "cpu" | "mps" | "cuda"; cuda_device gave cuda:0
         temperatures=checkpoint / "temperatures.json",
         branch_batch_size=get_int(settings, "bongard_branch_batch", 8),
     )
