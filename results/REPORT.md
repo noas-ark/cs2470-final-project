@@ -5,6 +5,78 @@ A browsable version with charts is [`report.html`](report.html).
 
 ## batch
 
+Hypothesis H2 (docs/h2_batch_findings.md): B independent requests per forward, newest record per GPU and series, `s1 nsys` records left out. TFLOP/s is cost-model FLOPs over wall time; CPU share is 1 - GPU kernel time / wall time at batch 1. The eager batch-1 floor depends on the host CPU, listed per row.
+
+### Batch 1: CPU vs GPU share of latency
+
+| GPU | Series | Host CPU | State tokens | Wall ms | Kernel ms | CPU share | Kernels |
+|---|---|---|---|---|---|---|---|
+| L4 (Modal) | Laya eager | Skylake/Cascade Lake | 128 | 39.6 | 15.4 | 0.61 | 1168 |
+| L4 (Modal) | Laya CUDA graphs | Skylake/Cascade Lake | 128 | 17.1 | 14.4 | 0.16 | 1166 |
+| L4 (Modal) | Laya torch.compile | Skylake/Cascade Lake | 128 | 54.3 | 11.9 | 0.78 | 454 |
+| L4 (Modal) | Laya compile + graphs | Skylake/Cascade Lake | 128 | 20.5 | 12.2 | 0.40 | 454 |
+| L4 (Modal) | Kev-4B (fused + graphs) | Skylake/Cascade Lake | 128 | 99.9 | 107.9 | 0.00 | 2090 |
+| L4 (Modal) | Qwen3-8B eager | Skylake/Cascade Lake | 128 | 187.6 | 222.7 | 0.00 | 1971 |
+| A100-SXM4-80GB (Modal) | Laya eager | Sapphire Rapids | 128 | 16.1 | 8.1 | 0.50 | 1156 |
+| A100-SXM4-80GB (Modal) | Laya CUDA graphs | Sapphire Rapids | 128 | 9.5 | 7.4 | 0.22 | 1154 |
+| A100-SXM4-80GB (Modal) | Laya torch.compile | Sapphire Rapids | 128 | 16.8 | 4.7 | 0.72 | 442 |
+| A100-SXM4-80GB (Modal) | Laya compile + graphs | Sapphire Rapids | 128 | 8.7 | 4.6 | 0.47 | 442 |
+| A100-SXM4-80GB (Modal) | Kev-4B (fused + graphs) | Sapphire Rapids | 128 | 28.8 | 31.5 | 0.00 | 2139 |
+| A100-SXM4-80GB (Modal) | Qwen3-8B eager | Sapphire Rapids | 128 | 47.7 | 51.0 | 0.00 | 1971 |
+| H100 80GB HBM3 (Modal) | Laya eager | Zen 3 | 128 | 35.2 | 4.4 | 0.87 | 1159 |
+| H100 80GB HBM3 (Modal) | Laya CUDA graphs | Zen 3 | 128 | 5.9 | 4.1 | 0.30 | 1157 |
+| H100 80GB HBM3 (Modal) | Laya torch.compile | Zen 3 | 128 | 35.1 | 2.4 | 0.93 | 445 |
+| H100 80GB HBM3 (Modal) | Laya compile + graphs | Zen 3 | 128 | 8.3 | 2.3 | 0.72 | 445 |
+| H100 80GB HBM3 (Modal) | Kev-4B (fused + graphs) | Zen 3 | 128 | 16.0 | 14.4 | 0.10 | 2154 |
+| H100 80GB HBM3 (Modal) | Qwen3-8B eager | Zen 3 | 128 | 49.2 | 19.3 | 0.61 | 1971 |
+| H200 (Modal) | Laya eager | Sapphire Rapids | 128 | 16.8 | 4.0 | 0.76 | 1159 |
+| H200 (Modal) | Laya CUDA graphs | Sapphire Rapids | 128 | 6.0 | 3.8 | 0.36 | 1157 |
+| H200 (Modal) | Laya torch.compile | Sapphire Rapids | 128 | 18.3 | 2.2 | 0.88 | 445 |
+| H200 (Modal) | Laya compile + graphs | Sapphire Rapids | 128 | 6.3 | 2.2 | 0.64 | 445 |
+| H200 (Modal) | Kev-4B (fused + graphs) | Sapphire Rapids | 128 | 14.3 | 12.9 | 0.10 | 2154 |
+| H200 (Modal) | Qwen3-8B eager | Sapphire Rapids | 128 | 31.1 | 18.3 | 0.41 | 1971 |
+| B200 (Modal) | Laya eager | Emerald Rapids | 128 | 17.3 | 4.4 | 0.75 | 1155 |
+| B200 (Modal) | Laya CUDA graphs | Emerald Rapids | 128 | 5.4 | 3.9 | 0.28 | 1153 |
+| B200 (Modal) | Laya torch.compile | Emerald Rapids | 128 | 15.0 | 2.0 | 0.87 | 441 |
+| B200 (Modal) | Laya compile + graphs | Emerald Rapids | 128 | 5.6 | 2.0 | 0.64 | 441 |
+| B200 (Modal) | Kev-4B (fused + graphs) | Emerald Rapids | 128 | 12.1 | 11.7 | 0.03 | 2140 |
+| B200 (Modal) | Qwen3-8B eager | Emerald Rapids | 128 | 30.6 | 14.5 | 0.52 | 1972 |
+
+### Achieved TFLOP/s vs batch size
+
+| GPU | Series | B=1 | B=2 | B=4 | B=8 | B=16 | B=32 | B=64 | Gain |
+|---|---|---|---|---|---|---|---|---|---|
+| L4 (Modal) | Laya eager | 5 | 9 | 18 | 21 | 19 | 17 | 17 | 3.6x |
+| L4 (Modal) | Laya CUDA graphs | 11 | 15 | 18 | 20 | 18 | 17 | 17 | 1.5x |
+| L4 (Modal) | Laya torch.compile | 3 | 9 | 20 | 27 | 27 | 28 | 28 | 8.2x |
+| L4 (Modal) | Laya compile + graphs | 9 | 12 | 16 | 23 | 27 | 28 | 28 | 3.1x |
+| L4 (Modal) | Kev-4B (fused + graphs) | 23 | 30 | 32 | 36 | 36 | 36 | 36 | 1.6x |
+| L4 (Modal) | Qwen3-8B eager | 29 | 38 | 38 | 38 | 38 | 38 | 38 | 1.3x |
+| A100-SXM4-80GB (Modal) | Laya eager | 11 | 21 | 42 | 57 | 64 | 69 | 72 | 6.3x |
+| A100-SXM4-80GB (Modal) | Laya CUDA graphs | 20 | 31 | 46 | 58 | 65 | 69 | 72 | 3.7x |
+| A100-SXM4-80GB (Modal) | Laya torch.compile | 11 | 32 | 59 | 81 | 96 | 102 | 104 | 9.4x |
+| A100-SXM4-80GB (Modal) | Laya compile + graphs | 21 | 28 | 38 | 65 | 85 | 102 | 107 | 5.0x |
+| A100-SXM4-80GB (Modal) | Kev-4B (fused + graphs) | 81 | 109 | 129 | 139 | 146 | 147 | 148 | 1.8x |
+| A100-SXM4-80GB (Modal) | Qwen3-8B eager | 115 | 139 | 163 | 172 | 178 | 182 | 184 | 1.6x |
+| H100 80GB HBM3 (Modal) | Laya eager | 5 | 11 | 24 | 49 | 85 | 101 | 111 | 21.2x |
+| H100 80GB HBM3 (Modal) | Laya CUDA graphs | 31 | 54 | 79 | 101 | 108 | 114 | 121 | 3.8x |
+| H100 80GB HBM3 (Modal) | Laya torch.compile | 5 | 14 | 29 | 58 | 107 | 163 | 179 | 33.9x |
+| H100 80GB HBM3 (Modal) | Laya compile + graphs | 22 | 31 | 41 | 88 | 136 | 169 | 180 | 8.1x |
+| H100 80GB HBM3 (Modal) | Kev-4B (fused + graphs) | 145 | 198 | 252 | 273 | 300 | 300 | 302 | 2.1x |
+| H100 80GB HBM3 (Modal) | Qwen3-8B eager | 111 | 236 | 375 | 403 | 411 | 404 | 410 | 3.7x |
+| H200 (Modal) | Laya eager | 11 | 20 | 42 | 82 | 118 | 126 | 136 | 12.3x |
+| H200 (Modal) | Laya CUDA graphs | 31 | 50 | 78 | 100 | 115 | 111 | 128 | 4.1x |
+| H200 (Modal) | Laya torch.compile | 10 | 27 | 53 | 103 | 170 | 186 | 193 | 19.1x |
+| H200 (Modal) | Laya compile + graphs | 29 | 38 | 53 | 104 | 156 | 187 | 191 | 6.5x |
+| H200 (Modal) | Kev-4B (fused + graphs) | 162 | 218 | 275 | 293 | 322 | 323 | 323 | 2.0x |
+| H200 (Modal) | Qwen3-8B eager | 176 | 327 | 396 | 429 | 429 | 415 | 427 | 2.4x |
+| B200 (Modal) | Laya eager | 11 | 19 | 44 | 78 | 148 | 155 | 156 | 14.6x |
+| B200 (Modal) | Laya CUDA graphs | 34 | 61 | 101 | 133 | 151 | 157 | 164 | 4.8x |
+| B200 (Modal) | Laya torch.compile | 12 | 36 | 74 | 118 | 225 | 253 | 266 | 21.6x |
+| B200 (Modal) | Laya compile + graphs | 33 | 42 | 59 | 129 | 211 | 259 | 239 | 7.1x |
+| B200 (Modal) | Kev-4B (fused + graphs) | 192 | 272 | 360 | 381 | 425 | 446 | 444 | 2.3x |
+| B200 (Modal) | Qwen3-8B eager | 179 | 355 | 547 | 590 | 638 | 678 | 718 | 4.0x |
+
 ### Leaderboard (each model's largest run)
 
 | Model | b1_cpu_share | Platform | Hardware | Run |
