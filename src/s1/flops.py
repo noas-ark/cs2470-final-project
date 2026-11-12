@@ -22,9 +22,10 @@ work: causal attention counts the (n+1)/2 average keys a query sees, not the ful
 kernel computes, and padding rows are counted because the GPU executes them. Elementwise ops (norms, rotary,
 activations) are left out; they are well under 1% of the matmul FLOPs at these sizes.
 
-Supported `model_type`s: qwen3_5 / qwen3_5_text (Gated DeltaNet + gated attention), qwen3, olmoe, lfm2_moe
-(short conv + attention, MoE), granitemoehybrid (Mamba2 + attention, MoE) and modernbert (a bidirectional
-encoder: every query sees every key, or a `local_attention` window on its sliding layers; Laya).
+Supported `model_type`s: qwen3_5 / qwen3_5_text (Gated DeltaNet + gated attention), qwen3, olmoe, lfm2
+(short conv + attention, dense: d1-3B's text tower), lfm2_moe (the same, MoE), granitemoehybrid (Mamba2 +
+attention, MoE) and modernbert (a bidirectional encoder: every query sees every key, or a `local_attention`
+window on its sliding layers; Laya).
 `tests/test_flops.py` checks the derived parameter count of each against the Hub's safetensors total.
 
 An encoder-decoder (t5gemma2: Bongard-mini) has several stacks, each its own `Arch`: `stacks(config)`
@@ -199,6 +200,40 @@ def olmoe(cfg: Mapping[str, object]) -> Arch:
     return Arch("olmoe", d, vocab, tied, (layer,) * n, vocab * d * (1 if tied else 2) + d)
 
 
+def lfm2_ffn_dim(cfg: Mapping[str, object]) -> int:
+    """LFM2's SwiGLU width: `intermediate_size`, or HF's sizing rule from it when `block_auto_adjust_ff_dim`
+    (Lfm2Config's default) is on: 2/3 of it, times `block_ffn_dim_multiplier`, rounded up to
+    `block_multiple_of`."""
+    hidden = _int(cfg, "intermediate_size")
+    if not cfg.get("block_auto_adjust_ff_dim", True):
+        return hidden
+    hidden = int(2 * hidden / 3)
+    multiplier = cfg.get("block_ffn_dim_multiplier", 1.0)
+    if isinstance(multiplier, int | float) and not isinstance(multiplier, bool):
+        multiple = _int(cfg, "block_multiple_of", 256)
+        hidden = int(multiplier * hidden)
+        hidden = multiple * ((hidden + multiple - 1) // multiple)
+    return hidden
+
+
+def lfm2(cfg: Mapping[str, object]) -> Arch:
+    """Dense LFM2 (d1-3B's text tower): short-conv and GQA layers (per-head q/k norms), each with a SwiGLU."""
+    d, n, vocab = _int(cfg, "hidden_size"), _int(cfg, "num_hidden_layers"), _int(cfg, "vocab_size")
+    short_conv = d * 3 * d + d * _int(cfg, "conv_L_cache") + d * d  # in_proj, depthwise taps, out_proj
+    ffn = _swiglu(d, lfm2_ffn_dim(cfg)) + 2 * d  # + operator and ffn norms
+    layers: list[Layer] = []
+    for t in _layer_types(cfg, "layer_types", n):
+        if t == "full_attention":
+            mixer = _attention(cfg, d, gate=False, qk_norm="head")
+        elif t == "conv":
+            mixer = Layer("short_conv", short_conv)
+        else:
+            raise ValueError(f"unknown lfm2 layer type {t!r}")
+        layers.append(replace(mixer, dense_params=mixer.dense_params + ffn))
+    tied = bool(cfg.get("tie_word_embeddings", True))
+    return Arch("lfm2", d, vocab, tied, tuple(layers), vocab * d * (1 if tied else 2) + d)
+
+
 def lfm2_moe(cfg: Mapping[str, object]) -> Arch:
     d, n, vocab = _int(cfg, "hidden_size"), _int(cfg, "num_hidden_layers"), _int(cfg, "vocab_size")
     experts, k = _int(cfg, "num_experts"), _int(cfg, "num_experts_per_tok")
@@ -370,6 +405,7 @@ BUILDERS = {
     "qwen3_5_text": qwen35,
     "qwen3": qwen3,
     "olmoe": olmoe,
+    "lfm2": lfm2,
     "lfm2_moe": lfm2_moe,
     "granitemoehybrid": granitemoehybrid,
     "modernbert": modernbert,

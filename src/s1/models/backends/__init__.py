@@ -28,6 +28,7 @@ BACKENDS: dict[str, str] = {
     "laya": "s1.models.backends.laya:LayaBackend",
     "bongard": "s1.models.backends.bongard:BongardBackend",
     "elephant": "s1.models.backends.elephant:ElephantBackend",
+    "d1": "s1.models.backends.d1:D1Backend",
 }
 
 

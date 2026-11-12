@@ -1,5 +1,6 @@
 """The in-process GPU backends' pure parts: question mapping, token layout, readout, guards. No torch."""
 
+import contextlib
 import hashlib
 import json
 import math
@@ -9,7 +10,7 @@ import threading
 
 import pytest
 
-from s1.models.backends import gpu, kev, laya, semif
+from s1.models.backends import d1, gpu, kev, laya, semif
 from s1.models.catalog import CATALOG
 
 CHOICE = {
@@ -46,6 +47,8 @@ def test_single_gpu_models_are_ready_and_parallel_ones_planned():
         "lfm2-8b-a1b.zeroshot": "semif",
         "granite4-h-tiny.zeroshot": "semif",
         "elephant-1": "elephant",
+        "d1-3b.eager": "d1",
+        "d1-3b.compiled": "d1",
     }
 
 
@@ -248,3 +251,108 @@ def test_laya_refuses_unreviewed_code(tmp_path):
     with pytest.raises(RuntimeError, match="re-review"):
         laya.import_reviewed(tmp_path)
     assert "rl_agent_api" not in sys.modules
+
+
+# --- d1 -----------------------------------------------------------------------------------------
+
+
+def test_d1_variants_differ_only_in_compile():
+    eager, compiled = spec("d1-3b.eager"), spec("d1-3b.compiled")
+    assert (eager.options["d1_compile"], compiled.options["d1_compile"]) == (False, True)
+    assert eager.repo == compiled.repo == "LiquidAI/d1-3B"
+    assert eager.revision == compiled.revision == "05b80faf55536582ad5ffb2da7456f6a653acf71"
+    assert eager.size_bytes == 6_247_065_504  # model.safetensors at the pin; fits one 24 GB L4
+    assert eager.license == "lfm1.0"
+
+
+def test_d1_refuses_unreviewed_code(tmp_path):
+    for name in d1.CODE_SHA256:
+        (tmp_path / name).write_text("import os\n")
+    with pytest.raises(RuntimeError, match="re-review"):
+        d1.check_code(tmp_path)
+
+
+class FakeIds:
+    def __init__(self, rows, tokens):
+        self.shape = (rows, tokens)
+
+
+class FakeLengths:
+    def __init__(self, values):
+        self.values = values
+
+    def tolist(self):
+        return self.values
+
+
+class FakeRecorder:
+    def __init__(self):
+        self.shapes = []
+
+    def span(self, shape):
+        self.shapes.append(shape)
+        return contextlib.nullcontext()
+
+
+class FakeD1Model:
+    """D1Model's two passes; `engine.system_one` answers through whichever the request takes."""
+
+    def __init__(self):
+        self.engine = self
+        self.calls = []
+
+    def _one_pass(self, **kwargs):
+        self.calls.append(("chain", kwargs))
+        return "logits"
+
+    def answer(self, trunk, questions, lengths, **vision):
+        self.calls.append(("tree", trunk.shape))
+        return "leaves"
+
+    def system_one(self, state, questions):
+        if len(questions) == 1:
+            self._one_pass(input_ids=FakeIds(1, 40), logits_to_keep=1)
+        else:
+            self.answer(FakeIds(1, 30), None, FakeLengths([5] * len(questions)))
+        return {"answers": {k: {"type": "noul", "noul": 0.5} for k in questions}, "usage": {}}
+
+
+def make_d1(max_tokens=16384):
+    m = FakeD1Model()
+    model = d1.D1(m, m, max_tokens, compiled=False)
+    model.install()
+    return model, m
+
+
+def test_d1_records_each_pass_as_one_span():
+    model, fake = make_d1()
+    rec = FakeRecorder()
+    model.recorder = rec
+    assert model.decide("s", {"q": NOUL}) == {"q": {"type": "noul", "noul": 0.5}}
+    model.decide("s", {"a": NOUL, "b": CHOICE})
+    assert rec.shapes == [
+        {"rows": 1, "tokens": 40, "past": 0, "kept": 1, "cached": False},
+        {"rows": 1, "tokens": 40, "past": 0, "kept": 2, "cached": False},  # 30-token trunk + 2 x 5
+    ]
+    assert [kind for kind, _ in fake.calls] == ["chain", "tree"]
+
+
+def test_d1_answers_unrecorded_until_profiled():
+    model, fake = make_d1()
+    model.decide("s", {"q": NOUL})
+    assert fake.calls[0][1]["logits_to_keep"] == 1
+
+
+def test_d1_over_long_prompts_are_invalid():
+    model, fake = make_d1(max_tokens=39)
+    with pytest.raises(ValueError, match="max_prompt_tokens=39"):
+        model.decide("s", {"q": NOUL})
+    with pytest.raises(ValueError, match="35 prompt tokens"):  # a tree's trunk + its longest branch
+        make_d1(max_tokens=34)[0].decide("s", {"a": NOUL, "b": NOUL})
+    assert fake.calls == []  # refused before the model runs
+
+
+def test_d1_compiled_counts_no_flops():
+    model, _ = make_d1()
+    model.compiled = True
+    assert math.isnan(model.count_flops("s", {"q": NOUL}))

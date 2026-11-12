@@ -1,0 +1,31 @@
+# d1-3B on the same L4 roofline as configs/roofline_l4.toml (same subset, ceilings, tokenizer and settings),
+# served by the repo's own System One code (backends/d1.py). The pair is one checkpoint run two ways:
+# d1-3b.eager (plain transformers-style pass) and d1-3b.compiled (the card's CUDA graphs; it claims 16 ms vs
+# 8 ms for one question on an RTX 4090). Same layer family as lfm2-8b-a1b.zeroshot (short conv + GQA), but
+# dense, 2.7B text parameters and decision-trained.
+# CUDA graphs capture per new prompt length, so the warm-up answers the whole subset once, untimed (as the
+# Kev configs do). FlopCounterMode cannot see a graph replay: the compiled variant's counted FLOPs are nan.
+# Weights (once): sbatch scripts/download_model.sh LiquidAI/d1-3B 05b80faf55536582ad5ffb2da7456f6a653acf71 d1-3B
+#   uv run s1 submit configs/roofline_l4_d1.toml -p gpu-spec --gpu-type l4 -g 1 -c 8 --mem 28G -t 02:00:00
+# Hardware counters (Nsight Compute, a few questions per model, slow: every kernel is replayed):
+#   uv run s1 submit configs/roofline_l4_d1.toml --ncu 4 -p gpu-spec --gpu-type l4 -g 1 -c 8 --mem 28G -t 05:00:00
+benchmarks = ["roofline"]
+
+[invariants]
+gpu = "auto"
+require_gpu = "L4"
+dtype = "bfloat16"
+measure_ceilings = true
+max_prompt_tokens = 16384
+
+[params]
+roofline_limit = 200
+roofline_seed = 0
+roofline_max_tokens = 1024
+roofline_max_options = 16
+roofline_warmup = 200
+roofline_counted = 8
+roofline_tokenizer_file = "$MODELS_DIR/Qwen3.5-4B-Base/tokenizer.json"
+
+[sweep]
+model = ["d1-3b.eager", "d1-3b.compiled"]

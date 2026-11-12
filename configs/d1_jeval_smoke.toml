@@ -1,0 +1,26 @@
+# Smoke check for Liquid AI's d1-3B (open d1 decision model, LFM Open License v1.0): 200 random JEVal
+# questions, one at a time, on one L4, through the repo's own System One code (sha256-pinned in
+# backends/d1.py). d1-3b.eager is the plain pass; d1-3b.compiled is the card's CUDA-graph path
+# (torch.compile, mode="reduce-overhead"). The two should agree on accuracy to bf16 noise. The compiled
+# variant captures a graph per new prompt length, so its latency here includes captures; use the roofline
+# configs (whole-subset warm-up) for its speed.
+# Weights and code (once; the six .py files are checked against the reviewed hashes before import):
+#   sbatch scripts/download_model.sh LiquidAI/d1-3B 05b80faf55536582ad5ffb2da7456f6a653acf71 d1-3B
+# Then (gpu-spec types its GPUs; require_gpu refuses anything but an L4):
+#   uv run s1 submit configs/d1_jeval_smoke.toml -p gpu-spec --gpu-type l4 -g 1 -c 8 --mem 28G -t 02:00:00
+benchmarks = ["jeval"]
+
+[invariants]
+gpu = "auto"
+require_gpu = "L4"
+dtype = "bfloat16"
+max_prompt_tokens = 16384  # the model reads 32,768; this matches the openjev runs
+
+[params]
+jeval_limit = 200
+jeval_seed = 0
+jeval_concurrency = 1
+jeval_warmup = true      # one untimed pass first: kernel compilation is not latency
+
+[sweep]
+model = ["d1-3b.eager", "d1-3b.compiled"]

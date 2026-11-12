@@ -70,6 +70,34 @@ LFM2 = {
     "conv_L_cache": 3,
     "layer_types": LFM2_LAYERS,
 }
+# d1-3B@05b80fa: an LFM2-VL checkpoint; the cost model reads its text_config (the SigLIP2 tower and the
+# projector never run on a text state). Hub total 3,123,483,888; its model.language_model.* tensors (tied
+# head) hold 2,697,198,592.
+D1_3B_LAYERS = (
+    ["conv", "conv", "full_attention", "conv", "conv", "full_attention"]
+    + ["conv", "conv", "conv", "full_attention"] * 4
+    + ["conv", "conv", "full_attention"] * 2
+    + ["conv", "conv"]
+)
+D1_3B = {
+    "model_type": "lfm2_vl",
+    "tie_word_embeddings": True,
+    "text_config": {
+        "model_type": "lfm2",
+        "hidden_size": 2048,
+        "num_hidden_layers": 30,
+        "vocab_size": 128000,
+        "intermediate_size": 10752,
+        "block_auto_adjust_ff_dim": False,
+        "block_ffn_dim_multiplier": 1.0,
+        "block_multiple_of": 256,
+        "num_attention_heads": 32,
+        "num_key_value_heads": 8,
+        "conv_L_cache": 3,
+        "tie_word_embeddings": True,
+        "layer_types": D1_3B_LAYERS,
+    },
+}
 GRANITE = {
     "model_type": "granitemoehybrid",
     "hidden_size": 1536,
@@ -119,6 +147,7 @@ MMBERT_BASE = MODERNBERT_LARGE | {  # Laya (multilingual): mmBERT-base
         (QWEN3_8B, 8_190_735_360),
         (OLMOE, 6_919_161_856),
         (LFM2, 8_339_929_856),
+        (D1_3B, 2_697_198_592),  # d1-3B@05b80fa model.safetensors, model.language_model.* tensors
         (GRANITE, 6_939_037_248),
         (MODERNBERT_LARGE, 394_781_696),  # laya@7b928d8 model.safetensors, encoder.* tensors
         (MMBERT_BASE, 306_939_648),  # laya@7b928d8 multilingual/model.safetensors, encoder.*
@@ -141,6 +170,22 @@ def test_lfm2_layout_has_the_configs_layer_mix():
     mixers = [ly.mixer for ly in flops.arch(LFM2).layers]
     assert mixers.count("attention") == 6
     assert mixers.count("short_conv") == 18
+
+
+def test_d1_3b_layout_and_ffn_width():
+    a = flops.arch(D1_3B)
+    assert a.model_type == "lfm2"
+    mixers = [ly.mixer for ly in a.layers]
+    assert (mixers.count("attention"), mixers.count("short_conv")) == (8, 22)
+    assert a.active_params == a.params - 128000 * 2048 - 2048  # dense: everything but embedding and norm
+
+
+def test_lfm2_ffn_dim_follows_hfs_sizing_rule():
+    """Lfm2Config's default auto-adjusts: 2/3 of intermediate_size, times the multiplier, up to a multiple."""
+    assert flops.lfm2_ffn_dim({"intermediate_size": 10752, "block_auto_adjust_ff_dim": False}) == 10752
+    assert flops.lfm2_ffn_dim({"intermediate_size": 12288}) == 8192
+    cfg = {"intermediate_size": 12288, "block_ffn_dim_multiplier": 1.3, "block_multiple_of": 256}
+    assert flops.lfm2_ffn_dim(cfg) == 10752  # int(1.3 * 8192) = 10649, rounded up to 256
 
 
 def test_active_params_count_top_k_experts_only():

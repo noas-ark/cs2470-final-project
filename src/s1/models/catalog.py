@@ -255,6 +255,29 @@ ELEPHANT = ModelSpec(
     "shared-prefix prefill per request, slot_lm readout, fp32 LM head. #1 of 6-13B on Decision Index 0.4.1.",
 )
 
+D1_3B = ModelSpec(
+    name="d1-3b.eager",
+    group="D-hybrid",
+    status="ready",
+    backend="d1",
+    repo="LiquidAI/d1-3B",
+    revision="05b80faf55536582ad5ffb2da7456f6a653acf71",
+    base_repo="LiquidAI/LFM2.5-VL-3B",
+    base_revision="35a118d938ce6d123ac2d371649f24a8efb69058",
+    license="lfm1.0",
+    resolved_on="2026-11-12",
+    size_bytes=6_247_065_504,
+    options={"d1_compile": False},
+    notes="Liquid AI's open decision model: a full post-train of LFM2.5-VL-3B (dense LFM2 text tower, 22 "
+    "short-conv + 8 GQA layers, plus a SigLIP2 tower that never runs on a text state). Runs the repo's own "
+    "System One code (reviewed, sha256-pinned): one forward pass per question, softmax over the option "
+    "tokens at the answer slot, no KV cache. LFM Open License v1.0 (research use; commercial use capped "
+    "at $10M revenue). Revisions are proposed pins (HEAD on 2026-11-12).",
+)
+# The same weights with the card's CUDA-graph path: SystemOne(compile=True), torch.compile(forward,
+# mode="reduce-overhead"). The card measures 16 ms eager vs 8 ms graphed for one question on an RTX 4090.
+D1_3B_COMPILED = D1_3B.variant("compiled", options={"d1_compile": True})
+
 CATALOG: list[ModelSpec] = [
     OPENJEV,
     LAYA_MULTILINGUAL,
@@ -273,4 +296,6 @@ CATALOG: list[ModelSpec] = [
     LFM2_MOE,
     GRANITE_H,
     ELEPHANT,
+    D1_3B,
+    D1_3B_COMPILED,
 ]

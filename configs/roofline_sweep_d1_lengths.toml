@@ -1,0 +1,42 @@
+# M4 GPU sweep for d1-3B (eager and CUDA-graphed). STATE-LENGTH AXIS, the same grid and subset as
+# configs/roofline_sweep_lengths.toml: 40 seeded JEVal questions whose own state is at least 2048 reference
+# tokens, each state cut to its first 32, 128, 256, 512, 768, 1024, 1536 and 2048 tokens (40 x 8 = 320 timed
+# questions per model; the same questions at every length), so the points line up with the other models'.
+# Timing and roofline only: accuracy at cut lengths is not meaningful.
+# configs/roofline_l4_d1.toml unchanged except where it runs: [launch] fans out across five Modal GPUs,
+# gpu_metrics is detailed (every Modal GPU run), and require_gpu comes from the launcher, one per GPU.
+# Weights (once, into the s1-models volume): s1 download LiquidAI/d1-3B 05b80faf55536582ad5ffb2da7456f6a653acf71 d1-3B
+# Then submit this config with the modal group, for all five GPUs or one (--gpu L4).
+benchmarks = ["roofline"]
+
+[launch]
+orchestrator = "modal"
+gpu = ["L4", "A100-80GB", "H100", "H200", "B200"]  # one container per GPU, run concurrently; require_gpu is set per GPU by the launcher
+gpus = 1
+cpus = 8
+mem = "28G"
+time = "02:00:00"
+
+[invariants]
+gpu_metrics = "detailed"
+gpu_metrics_schema = 1
+gpu = "auto"
+dtype = "bfloat16"
+measure_ceilings = true
+max_prompt_tokens = 16384
+
+[params]
+roofline_limit = 200
+roofline_seed = 0
+roofline_max_tokens = 1024
+roofline_max_options = 16
+roofline_warmup = 200
+roofline_counted = 8
+roofline_per_length = 40
+roofline_tokenizer_file = "$MODELS_DIR/Qwen3.5-4B-Base/tokenizer.json"
+
+[sweep]
+model = ["d1-3b.eager", "d1-3b.compiled"]
+
+[grid]
+roofline_state_tokens = [32, 128, 256, 512, 768, 1024, 1536, 2048]
