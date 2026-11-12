@@ -1,0 +1,44 @@
+# H2 references: the batch-size sweep (configs/batch_sweep_laya.toml, same grid and pool) on two larger
+# models. kev-4b.hybrid runs upstream's serving stack (fused Triton kernels + CUDA graphs, batched by
+# Server._run); qwen3-8b.zeroshot is plain transformers eager (SemIf direct readout, left-padded batches).
+# B = 64 at 1024 tokens may not fit next to 16 GB of weights on an L4: a point that runs out of memory is
+# recorded as batch_s<L>_b<B>_oom = 1 and the sweep goes on.
+# Bongard-mini is not here: its backend has no profiling hooks and it needs a 32 GB card.
+#   uv run --group modal s1 submit configs/batch_sweep_ref.toml --gpu L4
+#   uv run --group modal s1 submit configs/batch_sweep_ref.toml
+benchmarks = ["batch"]
+
+[launch]
+orchestrator = "modal"
+gpu = ["L4", "A100-80GB", "H100", "H200", "B200"]
+gpus = 1
+cpus = 8
+mem = "28G"
+time = "02:00:00"
+
+[invariants]
+gpu_metrics = "detailed"
+gpu_metrics_schema = 1
+gpu = "auto"
+dtype = "bfloat16"
+measure_ceilings = true
+max_prompt_tokens = 16384
+semif_max_options = 16
+
+[params]
+batch_seed = 0
+batch_pool = 64
+batch_min_decisions = 32
+batch_min_batches = 4
+batch_trace = 2
+batch_warmup = 8
+batch_max_options = 16
+batch_max_question_tokens = 512
+batch_tokenizer_file = "$MODELS_DIR/Qwen3.5-4B-Base/tokenizer.json"
+
+[sweep]
+model = ["kev-4b.hybrid", "qwen3-8b.zeroshot"]
+
+[grid]
+batch_state_tokens = [128, 1024]
+batch_sizes = [1, 2, 4, 8, 16, 32, 64]

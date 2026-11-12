@@ -1,0 +1,37 @@
+# Nsight Systems check of kev-4b.hybrid at batch 1, 1024 tokens (docs/h2_batch_findings.md, the (*) point):
+# on the H100, H200 and B200 its CUDA-event span is ~94% of wall but the in-process CUPTI trace finds GPU
+# kernels for only a quarter of it. `s1 nsys` profiles the shortest length of a config, hence this
+# one-length, one-size copy of configs/batch_sweep_ref.toml. Compare batch_nsys_kernel_ms with the sweep's
+# batch_s1024_b1_kernel_ms (27.5 ms on the H100): ~equal = the GPU really idles between kernels (host- or
+# launch-bound); ~wall = CUPTI missed kernels (GPU-bound). nsys inflates wall time, so read the kernel time,
+# not the CPU share.
+#   uv run --group modal s1 submit configs/batch_nsys_kev_1024.toml --gpu H100 --nsys 32
+benchmarks = ["batch"]
+
+[launch]
+orchestrator = "modal"
+gpu = ["H100", "H200", "B200"]
+gpus = 1
+cpus = 8
+mem = "28G"
+time = "01:00:00"
+
+[invariants]
+gpu_metrics = "detailed"
+gpu_metrics_schema = 1
+gpu = "auto"
+dtype = "bfloat16"
+max_prompt_tokens = 16384
+
+[params]
+model = "kev-4b.hybrid"
+batch_seed = 0
+batch_pool = 64
+batch_warmup = 8
+batch_max_options = 16
+batch_max_question_tokens = 512
+batch_tokenizer_file = "$MODELS_DIR/Qwen3.5-4B-Base/tokenizer.json"
+
+[grid]
+batch_state_tokens = [1024]
+batch_sizes = [1]

@@ -444,7 +444,7 @@ class FakeModal:
                     modal.functions.append(kw)
                 return lambda fn: Function(kw)
 
-            def run(self):
+            def run(self, detach=False):
                 return contextlib.nullcontext()
 
         self.App, self.Volume = App, Volume

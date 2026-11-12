@@ -37,7 +37,7 @@ import dataclasses
 import importlib
 import math
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 
@@ -74,6 +74,34 @@ class Kev:
         server.queue.put((enc, done))  # ty: ignore[unresolved-attribute]
         probs, _ = done.result()
         return dict(serve.to_answers(probs, meta))  # ty: ignore[unresolved-attribute]
+
+    def _encode(self, state: str, questions: Mapping[str, object]) -> object:
+        serve, server = self.serve, self.server
+        req = serve.SystemOneRequest(state=state, questions=dict(questions))  # ty: ignore[unresolved-attribute]
+        rec, _ = serve.to_record(serve.prepare(req))  # ty: ignore[unresolved-attribute]
+        return server.model.encode(  # ty: ignore[unresolved-attribute]
+            server.tok,  # ty: ignore[unresolved-attribute]
+            rec,
+            max_state=self.max_tokens,
+            max_branch=self.max_tokens,
+            strict=True,
+        )
+
+    def decide_batch(self, requests: Sequence[tuple[str, Mapping[str, object]]]) -> dict[str, int]:
+        """All `requests` as one batch of the server's model thread (benchmarks/batch_sweep.py): encoded here,
+        then `Server._run` under the server lock (its documented way to use the model directly), with the
+        prefix cache emptied first so no state is reused across batches. Probabilities come back on the
+        host."""
+        server = self.server
+        encs = [self._encode(state, questions) for state, questions in requests]
+        server.wait_idle()  # ty: ignore[unresolved-attribute]
+        with server.lock:  # ty: ignore[unresolved-attribute]
+            server.prefix_cache.clear()  # ty: ignore[unresolved-attribute]
+            server._run(encs)  # ty: ignore[unresolved-attribute]
+        return {
+            "decisions": sum(len(q) for _, q in requests),
+            "real_tokens": sum(len(e["ids"]) for e in encs),  # ty: ignore[not-subscriptable]
+        }
 
     def after_warmup(self) -> None:
         """Capture the CUDA graphs warm-up left pending, then forget every cached state."""

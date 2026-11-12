@@ -14,7 +14,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import config, env, ncu, report, runner
+from . import config, env, ncu, nsys, report, runner
 from .launch import FanOutLauncher, Outcome, Resources, get_launcher
 from .models.catalog import CATALOG
 from .record import RESULTS_DIR, RunRecord, Scalar, load_all
@@ -87,6 +87,43 @@ def ncu_cmd(
         rec.meta[ncu.META_CLOCK_CONTROL] = clock
         rec.save(results_dir)
         console.print(f"[{rec.run_id}] hardware counters: {hw}")
+
+
+@app.command("nsys")
+def nsys_cmd(
+    cfg: Path,
+    decisions: int = typer.Option(64, "--decisions", help="Batch-1 decisions in the profiled range."),
+    results_dir: Path = ResultsDir,
+    nsys_bin: str = typer.Option("/usr/local/cuda/bin/nsys", "--nsys", help="Nsight Systems CLI."),
+    sample: str = typer.Option("process-tree", "--sample", help="nsys --sample: process-tree or none."),
+) -> None:
+    """Run each model of a `batch` CONFIG under Nsight Systems (use inside an allocation): the benchmark
+    answers `--decisions` batch-1 decisions in a CUDA profiler range, and the CPU vs GPU split of their
+    latency (cuda_api_sum, cuda_gpu_kern_sum) is added to that run's record as batch_nsys_*. See
+    s1/nsys.py."""
+    specs = config.load(cfg)
+    job = env.job_id()
+    logs = env.log_dir()  # S1_LOG_DIR on Modal, so the reports come back with the run's logs
+    logs.mkdir(parents=True, exist_ok=True)
+    for i in range(len(specs)):
+        base = logs / f"nsys-{job}-{cfg.stem}-{i}"
+        before = set(results_dir.glob("*.json"))
+        child = [sys.executable, "-m", "s1.cli", "run", str(cfg), "--index", str(i)]
+        child += ["--results-dir", str(results_dir), "--set", f"batch_nsys={decisions}"]
+        subprocess.run([nsys_bin, *nsys.profile_args(str(base), sample), *child], check=True)
+        report_file = f"{base}.nsys-rep"
+        subprocess.run([nsys_bin, *nsys.stats_args(report_file, str(base))], check=True)
+        (path,) = set(results_dir.glob("*.json")) - before
+        rec = RunRecord.load(path)
+        api = nsys.parse(Path(f"{base}_cuda_api_sum.csv").read_text())
+        kernels = nsys.parse(Path(f"{base}_cuda_gpu_kern_sum.csv").read_text())
+        split = nsys.summarize(api, kernels, rec.results["batch"])
+        rec.results["batch"] = split | rec.results["batch"]
+        rec.meta["nsys_report"] = report_file
+        rec.meta[nsys.META_SAMPLE] = sample
+        rec.meta["batch_nsys_kernels_top"] = nsys.top_kernels(kernels)
+        rec.save(results_dir)
+        console.print(f"[{rec.run_id}] nsys CPU/GPU split: {split}")
 
 
 def launch_resources(
@@ -187,6 +224,7 @@ def submit(
     time: str | None = typer.Option(None, "-t", "--time", help="Default: [launch], else 01:00:00."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print what would be queued only."),
     ncu_questions: int = typer.Option(0, "--ncu", help="Queue `s1 ncu` with this many questions instead."),
+    nsys_decisions: int = typer.Option(0, "--nsys", help="Queue `s1 nsys` with this many decisions instead."),
 ) -> None:
     """Queue `s1 run CONFIG` (or `s1 ncu CONFIG`) on Slurm or Modal, per the config's [launch] table and
     the flags (flags win). Without [launch] or --on it is a Slurm batch job; logs go to logs/<jobid>.out.
@@ -199,6 +237,8 @@ def submit(
         cfg, on=on, partition=partition, gpu=gpu, gpus=gpus, gpu_type=gpu_type, cpus=cpus, mem=mem, time=time
     )
     s1 = ["ncu", str(cfg), "--questions", str(ncu_questions)] if ncu_questions else ["run", str(cfg)]
+    if nsys_decisions:
+        s1 = ["nsys", str(cfg), "--decisions", str(nsys_decisions)]
     if len(resolved) == 1:
         (res,) = resolved
         get_launcher(res.orchestrator).submit(cfg, res, s1, dry_run=dry_run)

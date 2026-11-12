@@ -293,7 +293,7 @@ def test_build_builds_one_image(monkeypatch):
         def __init__(self, name):
             self.name = name
 
-        def run(self):
+        def run(self, detach=False):
             return _Ctx()
 
     class _Ctx:
