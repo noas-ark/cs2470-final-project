@@ -35,10 +35,15 @@ class ForwardRecorder:
         self._suspended = 0
         self._pending: list[tuple[dict[str, Any], Any, Any]] = []
         self._open: list[tuple[dict[str, Any], Any]] = []
-        self._handles = [
-            model.register_forward_pre_hook(self._pre, with_kwargs=True),
-            model.register_forward_hook(self._post, with_kwargs=True),
-        ]
+        # model=None: no hooks, `span` only (a backend that times its own passes, e.g. bongard's stacks)
+        self._handles = (
+            []
+            if model is None
+            else [
+                model.register_forward_pre_hook(self._pre, with_kwargs=True),
+                model.register_forward_hook(self._post, with_kwargs=True),
+            ]
+        )
 
     def _pre(self, module: Any, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:  # noqa: ANN401
         import torch  # noqa: PLC0415

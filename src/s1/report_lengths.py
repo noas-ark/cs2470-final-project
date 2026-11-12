@@ -68,6 +68,11 @@ class Curve:
         return next((p for p in self.points if p.length == length), None)
 
 
+def _is_q_axis(r: RunRecord) -> bool:
+    """A questions-per-request run also has the length axis in its grid; report_qpr draws it."""
+    return bench_roofline.QPR_AXIS in r.grid
+
+
 def lengths_of(m: Metrics) -> list[int]:
     return sorted(int(g.group(1)) for k in m if (g := _LEN.match(k)))
 
@@ -125,7 +130,10 @@ class LengthPanel:
 def panels(recs: Sequence[RunRecord]) -> list[LengthPanel]:
     """Latest length-axis run per (platform, GPU, model, variant), grouped by (GPU, platform) and ordered as
     the natural panels are (datasheet bf16 peak, then name, the cluster first)."""
-    runs = sorted((r for r in recs if BENCH in r.results and rr.is_length_axis(r)), key=lambda r: r.run_id)
+    runs = sorted(
+        (r for r in recs if BENCH in r.results and rr.is_length_axis(r) and not _is_q_axis(r)),
+        key=lambda r: r.run_id,
+    )
     latest: dict[tuple[str, str, str, str], RunRecord] = {}
     for r in runs:
         if bool(r.params.get("roofline_ncu", 0)):

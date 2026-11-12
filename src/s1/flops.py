@@ -26,6 +26,12 @@ Supported `model_type`s: qwen3_5 / qwen3_5_text (Gated DeltaNet + gated attentio
 (short conv + attention, MoE), granitemoehybrid (Mamba2 + attention, MoE) and modernbert (a bidirectional
 encoder: every query sees every key, or a `local_attention` window on its sliding layers; Laya).
 `tests/test_flops.py` checks the derived parameter count of each against the Hub's safetensors total.
+
+An encoder-decoder (t5gemma2: Bongard-mini) has several stacks, each its own `Arch`: `stacks(config)`
+returns {"encoder", "cross_kv", "decoder"}, and a recorded forward names its stack (`Forward.stack`). Its
+decoder reads the encoded state as `past` keys (merged self + cross attention), one copy shared by every
+question row of the batch (`shared_past`). `arch(config)` refuses it: charging every pass to one stack
+would be silently wrong.
 """
 
 from __future__ import annotations
@@ -89,6 +95,8 @@ class Forward:
     kept: int = 1
     cached: bool = False  # the pass writes its K/V and states to a cache
     ms: float = math.nan
+    shared_past: bool = False  # every row attends to ONE copy of the past K/V (read once, not once per row)
+    stack: str = ""  # which of `stacks(config)` ran it ("" for a single-stack model)
 
 
 @dataclass(frozen=True)
@@ -285,6 +293,78 @@ def modernbert(cfg: Mapping[str, object]) -> Arch:
     return Arch("modernbert", d, vocab, True, tuple(layers), vocab * d + 2 * norm)  # embedding + 2 norms
 
 
+def _gemma3_layer(cfg: Mapping[str, object], d: int, *, causal: bool, window: int) -> Layer:
+    """A Gemma 3 block: q/k/v/o with per-head q/k norms, GeGLU MLP (gate, up, down), four RMSNorms."""
+    att = _attention(cfg, d, gate=False, qk_norm="head")
+    params = att.dense_params + _swiglu(d, _int(cfg, "intermediate_size")) + 4 * d
+    return replace(att, dense_params=params, causal=causal, window=window)
+
+
+def _section(cfg: Mapping[str, object], key: str) -> Mapping[str, object]:
+    sub = cfg.get(key)
+    if not isinstance(sub, Mapping):
+        raise KeyError(f"config has no {key!r} section")
+    return _text_config({str(k): v for k, v in sub.items()})
+
+
+def t5gemma2_stacks(cfg: Mapping[str, object]) -> dict[str, Arch]:
+    """T5Gemma 2 (Bongard-mini's backbone), text path only (the vision tower never runs on text).
+
+    encoder   bidirectional Gemma 3 text stack: sliding layers see a `sliding_window`-wide band, full ones all
+    cross_kv  the state's K/V projected once per decoder layer (k_proj + k_norm, v_proj: decoder weights)
+    decoder   Gemma 3 stack with merged attention: each question token attends causally to its own tokens and
+              to every state token (`past`); no separate cross-attention weights. The sliding window only
+              limits the self part, which is far shorter than the window, so it is not applied.
+    The decoder shares the encoder's embedding (no decoder.embed_tokens in the checkpoint); there is no vocab
+    head (a judgment head reads hidden states), so forwards keep 0 positions."""
+    enc, dec = _section(cfg, "encoder"), _section(cfg, "decoder")
+    d, vocab = _int(enc, "hidden_size"), _int(enc, "vocab_size")
+    n_enc, n_dec = _int(enc, "num_hidden_layers"), _int(dec, "num_hidden_layers")
+    window = _int(enc, "sliding_window")
+    types = _layer_types(enc, "layer_types", n_enc)
+    enc_layers = tuple(
+        _gemma3_layer(enc, d, causal=False, window=window if t == "sliding_attention" else 0) for t in types
+    )
+    dec_layers = tuple(
+        _gemma3_layer(dec, _int(dec, "hidden_size"), causal=True, window=0) for _ in range(n_dec)
+    )
+    kv = tuple(Layer("projection", 2 * d * ly.kv_dim + ly.head_dim) for ly in dec_layers)  # k, v, k_norm
+    # embedding + the encoder's eoi embedding + one final norm per stack (vision tower and projector excluded)
+    return {
+        "encoder": Arch("t5gemma2_encoder", d, vocab, True, enc_layers, vocab * d + d + d),
+        "cross_kv": Arch("t5gemma2_cross_kv", d, 0, True, kv, 0),
+        "decoder": Arch("t5gemma2_decoder", d, vocab, True, dec_layers, d),
+    }
+
+
+STACKS = {"t5gemma2": t5gemma2_stacks}
+
+
+def stacks(config: Mapping[str, object]) -> dict[str, Arch]:
+    """Every stack of a model, by the name its forwards carry: {"": arch(config)} for a single-stack model."""
+    model_type = config.get("model_type")
+    if isinstance(model_type, str) and model_type in STACKS:
+        return STACKS[model_type](config)
+    return {"": arch(config)}
+
+
+def merged(parts: Mapping[str, Arch]) -> Arch:
+    """One Arch holding every stack's layers and parameters (`params`, `active_params`, layer mix), for
+    reporting; a cross_kv stack reuses decoder weights, so its parameters are not counted again."""
+    if len(parts) == 1:
+        return next(iter(parts.values()))
+    counted = [a for name, a in parts.items() if name != "cross_kv"]
+    first = counted[0]
+    return Arch(
+        first.model_type.partition("_")[0],
+        first.hidden,
+        first.vocab,
+        first.tied,
+        tuple(ly for a in counted for ly in a.layers),
+        sum(a.extra_params for a in counted),
+    )
+
+
 BUILDERS = {
     "qwen3_5": qwen35,
     "qwen3_5_text": qwen35,
@@ -300,6 +380,10 @@ def arch(config: Mapping[str, object]) -> Arch:
     """The cost model of a HF `config.json` (a VLM's `text_config` is used when present)."""
     cfg = _text_config(config)
     model_type = cfg.get("model_type")
+    if isinstance(model_type, str) and model_type in STACKS:
+        raise KeyError(
+            f"{model_type} has several stacks ({', '.join(STACKS[model_type](cfg))}); use flops.stacks"
+        )
     if not isinstance(model_type, str) or model_type not in BUILDERS:
         raise KeyError(f"no cost model for model_type {model_type!r}; known: {', '.join(sorted(BUILDERS))}")
     return BUILDERS[model_type](cfg)
@@ -325,7 +409,8 @@ def cost(a: Arch, f: Forward, *, weight_bytes: int = BF16_BYTES, head_bytes: int
             if ly.window:
                 pairs = min(pairs, f.rows * f.tokens * min(keys, ly.window + 1))
             flops += 4.0 * ly.q_heads * ly.head_dim * pairs  # QK^T and PV
-            kv_tokens = f.rows * f.past + (tokens if f.cached else 0)  # past read + new written
+            past_read = f.past if f.shared_past else f.rows * f.past
+            kv_tokens = past_read + (tokens if f.cached else 0)  # past read + new written
             nbytes += 2.0 * ly.kv_dim * kv_tokens * weight_bytes
         elif ly.state_elements:
             flops += STATE_FLOPS_PER_ELEMENT * ly.state_elements * tokens

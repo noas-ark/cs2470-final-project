@@ -30,6 +30,9 @@ roofline are. A backend that cuts its input (Laya: 512 / 1024 tokens) is charged
 long points stop growing. Without the axis the benchmark is exactly the natural mode (Nathan's records stay
 comparable).
 
+**Questions-per-request axis** (`[grid] roofline_questions_per_request`, with the length axis): Q questions
+against one shared state in a single `decide` call, at fixed state lengths. benchmarks/roofline_q.py runs it.
+
 The model must implement (see backends/semif.py, backends/elephant.py):
     profile_info() -> {"config": HF config dict, "head_bytes": int, "ceilings": {name: float}}
                       (and "weight_bytes": 4 for a model that keeps fp32 weights; default 2)
@@ -73,6 +76,7 @@ from . import jeval
 from .shape_sweep import FileTokenCounter, TokenCounter, WordCounter, parse_int_list
 
 LENGTH_AXIS = "roofline_state_tokens"  # [grid] axis: state lengths in reference tokens
+QPR_AXIS = "roofline_questions_per_request"  # [grid] axis: questions per decide() call (roofline_q.py)
 WARM_PER_LENGTH = 2  # untimed questions at each length before timing
 
 BINS = (128, 256, 512, 1024, 4096)  # prompt tokens a question processed (all its forwards)
@@ -379,7 +383,6 @@ def run(model: object, settings: Settings) -> Metrics:
     config = info["config"]
     if not isinstance(config, Mapping):
         raise TypeError("profile_info()['config'] must be the model's HF config dict")
-    arch = flops.arch(config)
     head_bytes = int(_num({"head_bytes": flops.BF16_BYTES} | dict(info), "head_bytes", int))
     weight_bytes = int(_num({"weight_bytes": flops.BF16_BYTES} | dict(info), "weight_bytes", int))
     sizes = {"head_bytes": head_bytes, "weight_bytes": weight_bytes}
@@ -387,6 +390,11 @@ def run(model: object, settings: Settings) -> Metrics:
     if not isinstance(raw, Mapping):
         raise TypeError("profile_info()['ceilings'] must be a mapping")
     ceilings = {str(k): _num(raw, k, float) for k in raw}
+    if f"grid_{QPR_AXIS}" in settings:  # the questions-per-request axis: benchmarks/roofline_q.py
+        from . import roofline_q  # noqa: PLC0415 — it imports this module
+
+        return roofline_q.run(prof, settings, config, ceilings, sizes)
+    arch = flops.arch(config)
 
     rows, warm, row_lengths = select(settings)
     for row in warm:
